@@ -86,8 +86,19 @@ export class GameScene extends Phaser.Scene {
       this.pauseKeyP = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     }
 
+    this.scale.on('resize', this.handleScaleResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanup, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanup, this);
+  }
+
+  private handleScaleResize(): void {
+    // Display/canvas resized (fullscreen/rotation/window). Arena/camera/physics bounds stay at APP_CONFIG.
+    // Touch controls re-layout internally; this ensures Phaser scale state stays consistent.
+    try {
+      this.scale.refresh();
+    } catch {
+      // ignore
+    }
   }
 
   public update(_time: number, delta: number): void {
@@ -375,6 +386,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private cleanup(): void {
+    this.scale.off('resize', this.handleScaleResize, this);
     this.runOver = false;
     this.upgradeSelectionActive = false;
     this.upgradesCollected = 0;

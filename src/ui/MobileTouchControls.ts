@@ -18,13 +18,14 @@ export interface CooldownState {
 type AbilityCooldownProvider = () => CooldownState;
 
 interface ButtonConfig {
-  id: 'left' | 'right' | 'up' | 'attack' | 'dash';
+  id: 'left' | 'right' | 'up' | 'attack' | 'dash' | 'fullscreen';
   label: string;
   x: number;
   y: number;
   w: number;
   h: number;
   hold: boolean;
+  onAction?: () => void;
 }
 
 const toHex = (hex: string): number => Phaser.Display.Color.HexStringToColor(hex).color;
@@ -52,6 +53,7 @@ class TouchButton {
   private readonly hold: boolean;
   private readonly w: number;
   private readonly h: number;
+  private readonly onAction: (() => void) | null;
 
   constructor(
     scene: Phaser.Scene,
@@ -63,6 +65,7 @@ class TouchButton {
     this.hold = cfg.hold;
     this.w = cfg.w;
     this.h = cfg.h;
+    this.onAction = cfg.onAction ?? null;
     this.container = scene.add.container(cfg.x, cfg.y);
     this.bg = scene.add.rectangle(0, 0, cfg.w, cfg.h, toHex(COLORS.bg), 0.42);
     this.bg.setStrokeStyle(2, toHex(COLORS.border), 0.78);
@@ -159,6 +162,8 @@ class TouchButton {
     this.activePointers.add(pointer.id);
     if (!this.hold && wasEmpty) {
       this.edgePending = true;
+      // Action buttons (e.g. fullscreen) run on user gesture; do not affect gameplay intent.
+      this.onAction?.();
     }
     this.applyVisualState();
   }
@@ -178,9 +183,54 @@ class TouchButton {
     );
   }
 
+  public setLabel(text: string): void {
+    this.label.setText(text);
+  }
+
+  public setIconVariant(variant: 'default' | 'fullscreen-enter' | 'fullscreen-exit'): void {
+    if (this.id !== 'fullscreen') return;
+    this.drawFullscreenIcon(variant === 'fullscreen-exit');
+  }
+
+  private drawFullscreenIcon(exit: boolean): void {
+    const g = this.icon;
+    g.clear();
+    g.lineStyle(2, toHex(COLORS.icon), 0.95);
+    const s = 8;
+    // Corner brackets: outward = enter fullscreen, inward = exit fullscreen.
+    if (!exit) {
+      // top-left
+      g.lineBetween(-s, -s + 4, -s, -s);
+      g.lineBetween(-s, -s, -s + 4, -s);
+      // top-right
+      g.lineBetween(s - 4, -s, s, -s);
+      g.lineBetween(s, -s, s, -s + 4);
+      // bottom-right
+      g.lineBetween(s, s - 4, s, s);
+      g.lineBetween(s, s, s - 4, s);
+      // bottom-left
+      g.lineBetween(-s + 4, s, -s, s);
+      g.lineBetween(-s, s, -s, s - 4);
+    } else {
+      // inward marks
+      g.lineBetween(-s, -s + 2, -s + 4, -s + 2);
+      g.lineBetween(-s + 2, -s, -s + 2, -s + 4);
+      g.lineBetween(s - 4, -s + 2, s, -s + 2);
+      g.lineBetween(s - 2, -s, s - 2, -s + 4);
+      g.lineBetween(s - 4, s - 2, s, s - 2);
+      g.lineBetween(s - 2, s - 4, s - 2, s);
+      g.lineBetween(-s, s - 2, -s + 4, s - 2);
+      g.lineBetween(-s + 2, s - 4, -s + 2, s);
+    }
+  }
+
   private drawIcon(): void {
     const g = this.icon;
     g.clear();
+    if (this.id === 'fullscreen') {
+      this.drawFullscreenIcon(false);
+      return;
+    }
     g.fillStyle(toHex(COLORS.icon), 0.95);
     g.lineStyle(2, toHex(COLORS.icon), 0.95);
     const s = 10;
@@ -218,6 +268,82 @@ function isTouchDevice(scene: Phaser.Scene): boolean {
   return touchCapable || maxPoints > 0;
 }
 
+type FullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  mozFullScreenElement?: Element | null;
+  msFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+  mozCancelFullScreen?: () => Promise<void> | void;
+  msExitFullscreen?: () => Promise<void> | void;
+};
+
+type FullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+  mozRequestFullScreen?: () => Promise<void> | void;
+  msRequestFullscreen?: () => Promise<void> | void;
+};
+
+type OrientationLock = {
+  lock?: (orientation: 'landscape') => Promise<void>;
+};
+
+function getFullscreenElement(doc: FullscreenDocument): Element | null {
+  return (
+    doc.fullscreenElement ??
+    doc.webkitFullscreenElement ??
+    doc.mozFullScreenElement ??
+    doc.msFullscreenElement ??
+    null
+  );
+}
+
+function canRequestFullscreen(el: FullscreenElement | null): boolean {
+  if (!el) return false;
+  return !!(
+    el.requestFullscreen ||
+    el.webkitRequestFullscreen ||
+    el.mozRequestFullScreen ||
+    el.msRequestFullscreen
+  );
+}
+
+function requestFullscreenSafe(el: FullscreenElement): Promise<void> | void {
+  if (el.requestFullscreen) return el.requestFullscreen();
+  if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
+  if (el.mozRequestFullScreen) return el.mozRequestFullScreen();
+  if (el.msRequestFullscreen) return el.msRequestFullscreen();
+  return undefined;
+}
+
+function exitFullscreenSafe(doc: FullscreenDocument): Promise<void> | void {
+  if (doc.exitFullscreen) return doc.exitFullscreen();
+  if (doc.webkitExitFullscreen) return doc.webkitExitFullscreen();
+  if (doc.mozCancelFullScreen) return doc.mozCancelFullScreen();
+  if (doc.msExitFullscreen) return doc.msExitFullscreen();
+  return undefined;
+}
+
+function tryLockLandscape(): void {
+  try {
+    const orientation = (screen as Screen & { orientation?: OrientationLock }).orientation;
+    const lock = orientation?.lock;
+    if (typeof lock === 'function') {
+      // Must be called after a user action; ignore rejection/unsupported errors.
+      void Promise.resolve(lock.call(orientation, 'landscape')).catch(() => undefined);
+    }
+  } catch {
+    // Orientation lock unsupported or blocked - ignore.
+  }
+}
+
+function safeScaleRefresh(scene: Phaser.Scene): void {
+  try {
+    scene.scale.refresh();
+  } catch {
+    // Keep gameplay running even if scale refresh fails.
+  }
+}
+
 function readSafeInsets(): { left: number; right: number; bottom: number } {
   if (typeof document === 'undefined' || !document.body) {
     return { left: 0, right: 0, bottom: 0 };
@@ -247,12 +373,15 @@ export class MobileTouchControls {
   private readonly buttonById = new Map<ButtonConfig['id'], TouchButton>();
   private readonly capturedPointerIds = new Set<number>();
   private readonly enabled: boolean;
+  private readonly fullscreenAvailable: boolean;
   private visible = false;
   private readonly onResize: () => void;
   private readonly onBlur: () => void;
   private readonly onVisibility: () => void;
   private readonly onGlobalUp: (e: Event) => void;
   private readonly preventContextMenu: (e: Event) => void;
+  private readonly onFullscreenChange: () => void;
+  private readonly onFullscreenError: () => void;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -268,10 +397,12 @@ export class MobileTouchControls {
     this.root.setScrollFactor(0);
     this.root.setVisible(false);
 
+    this.fullscreenAvailable = this.enabled && this.detectFullscreenApi();
     if (this.enabled) {
       this.buildButtons(providers);
       this.layout();
       this.attachSafetyHandlers();
+      this.updateFullscreenButtonState();
     }
 
     this.onResize = () => this.layout();
@@ -283,6 +414,16 @@ export class MobileTouchControls {
     this.preventContextMenu = (e: Event) => {
       if (this.enabled && this.visible) e.preventDefault();
     };
+    this.onFullscreenChange = () => {
+      this.updateFullscreenButtonState();
+      safeScaleRefresh(this.scene);
+      this.layout();
+    };
+    this.onFullscreenError = () => {
+      // Do not throw on unsupported/failed fullscreen (e.g. iOS Safari limitations).
+      this.updateFullscreenButtonState();
+      safeScaleRefresh(this.scene);
+    };
     scene.scale.on('resize', this.onResize);
     if (typeof window !== 'undefined') {
       window.addEventListener('blur', this.onBlur);
@@ -292,6 +433,10 @@ export class MobileTouchControls {
     }
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.onVisibility);
+      document.addEventListener('fullscreenchange', this.onFullscreenChange);
+      document.addEventListener('webkitfullscreenchange', this.onFullscreenChange as EventListener);
+      document.addEventListener('fullscreenerror', this.onFullscreenError);
+      document.addEventListener('webkitfullscreenerror', this.onFullscreenError as EventListener);
     }
   }
 
@@ -328,7 +473,13 @@ export class MobileTouchControls {
     this.visible = visible;
     this.root.setVisible(visible);
     // Prevent hidden controls from capturing touches (menus/pause/upgrade/game-over).
-    for (const b of this.buttons) b.setInputEnabled(visible);
+    for (const b of this.buttons) {
+      if (b.id === 'fullscreen') {
+        b.setInputEnabled(visible && this.fullscreenAvailable);
+      } else {
+        b.setInputEnabled(visible);
+      }
+    }
     if (!visible) this.releaseAll();
   }
 
@@ -348,11 +499,95 @@ export class MobileTouchControls {
     }
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.onVisibility);
+      document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+      document.removeEventListener(
+        'webkitfullscreenchange',
+        this.onFullscreenChange as EventListener,
+      );
+      document.removeEventListener('fullscreenerror', this.onFullscreenError);
+      document.removeEventListener(
+        'webkitfullscreenerror',
+        this.onFullscreenError as EventListener,
+      );
     }
     this.root.destroy(true);
     this.buttons.length = 0;
     this.buttonById.clear();
   }
+
+  private getFullscreenTarget(): FullscreenElement | null {
+    const parent = this.scene.scale.parent as HTMLElement | null;
+    if (parent) return parent;
+    return (this.scene.game.canvas?.parentElement as FullscreenElement | null) ?? null;
+  }
+
+  private detectFullscreenApi(): boolean {
+    if (typeof document === 'undefined') return false;
+    const target = this.getFullscreenTarget();
+    return canRequestFullscreen(target);
+  }
+
+  private isInFullscreen(): boolean {
+    if (typeof document === 'undefined') return false;
+    const target = this.getFullscreenTarget();
+    const active = getFullscreenElement(document as FullscreenDocument);
+    if (!active) return false;
+    // Treat fullscreen as active when our game container or a parent is fullscreen.
+    return !!(target && (active === target || target.contains(active) || active.contains(target)));
+  }
+
+  private updateFullscreenButtonState(): void {
+    const btn = this.buttonById.get('fullscreen');
+    if (!btn) return;
+    if (!this.fullscreenAvailable) {
+      btn.setLabel('FULL');
+      btn.setIconVariant('fullscreen-enter');
+      btn.setInputEnabled(false);
+      return;
+    }
+    const active = this.isInFullscreen();
+    btn.setLabel(active ? 'EXIT' : 'FULL');
+    btn.setIconVariant(active ? 'fullscreen-exit' : 'fullscreen-enter');
+    btn.setInputEnabled(this.visible);
+  }
+
+  private toggleFullscreen = (): void => {
+    // Only from a user gesture (wired to button pointerdown). Never auto-trigger.
+    if (!this.fullscreenAvailable || typeof document === 'undefined') {
+      this.updateFullscreenButtonState();
+      return;
+    }
+    const doc = document as FullscreenDocument;
+    const target = this.getFullscreenTarget();
+    if (!target) {
+      this.updateFullscreenButtonState();
+      return;
+    }
+    try {
+      if (this.isInFullscreen()) {
+        const result = exitFullscreenSafe(doc);
+        void Promise.resolve(result)
+          .catch(() => undefined)
+          .finally(() => {
+            this.updateFullscreenButtonState();
+            safeScaleRefresh(this.scene);
+          });
+        return;
+      }
+      const result = requestFullscreenSafe(target);
+      void Promise.resolve(result)
+        .then(() => tryLockLandscape())
+        .catch(() => undefined)
+        .finally(() => {
+          this.updateFullscreenButtonState();
+          safeScaleRefresh(this.scene);
+        });
+    } catch {
+      // Missing/blocked Fullscreen API (e.g. iOS Safari) must not break gameplay.
+      this.updateFullscreenButtonState();
+      safeScaleRefresh(this.scene);
+    }
+  };
 
   private attachSafetyHandlers(): void {
     // Release controls if the pointer system reports an interruption.
@@ -378,6 +613,17 @@ export class MobileTouchControls {
         hold: true,
       },
       { id: 'dash', label: 'DASH', x: 0, y: 0, w: 88, h: 88, hold: false },
+      // Small mobile-only fullscreen toggle (no gameplay effect, user gesture only).
+      {
+        id: 'fullscreen',
+        label: 'FULL',
+        x: 0,
+        y: 0,
+        w: 52,
+        h: 40,
+        hold: false,
+        onAction: this.toggleFullscreen,
+      },
     ];
     for (const cfg of cfgs) {
       const provider =
@@ -425,6 +671,17 @@ export class MobileTouchControls {
       const attackX = w - margin - inset.right - aw / 2;
       attackBtn.setPosition(attackX, baseY);
       dashBtn.setPosition(attackX - aw / 2 - gap - dw / 2, baseY - (ah - dh) / 2);
+    }
+    // Small fullscreen toggle top-right (mobile-only), respecting safe area and pause button.
+    const fsBtn = this.buttonById.get('fullscreen');
+    if (fsBtn) {
+      const fw = 52;
+      const fh = 40;
+      // PauseButton sits at (w - 40, 36) size 44x36; place fullscreen to its left.
+      const fsX = w - margin - inset.right - fw / 2 - 44 - gap;
+      const fsY = margin + inset.bottom * 0 + fh / 2 + Math.max(0, inset.right ? 0 : 0);
+      fsBtn.setPosition(fsX, Math.max(margin + fh / 2, 36));
+      void fsY; // y anchored near top HUD; pause occupies rightmost spot.
     }
   }
 }
