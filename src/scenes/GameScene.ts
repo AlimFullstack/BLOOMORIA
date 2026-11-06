@@ -126,6 +126,7 @@ export class GameScene extends Phaser.Scene {
         },
         delta,
         null,
+        null,
       );
       this.waveController.halt(delta);
       this.renderHud();
@@ -153,11 +154,16 @@ export class GameScene extends Phaser.Scene {
         },
         delta,
         null,
+        null,
       );
     } else {
       const pointer = this.input.activePointer;
       const lookTarget = pointer ? { x: pointer.worldX, y: pointer.worldY } : null;
-      this.player.update(this.readIntent(), delta, lookTarget);
+      const intent = this.readIntent();
+      // Mobile attack button (#2): aim at nearest alive enemy when attack is triggered from touch controls.
+      const aimTarget =
+        intent.attackByTouch && intent.attackHeld ? this.getNearestEnemyTarget() : null;
+      this.player.update(intent, delta, lookTarget, aimTarget);
     }
 
     const target = this.player.getBodyObject();
@@ -199,7 +205,7 @@ export class GameScene extends Phaser.Scene {
     this.touchControls?.setVisible(show);
   }
 
-  private readIntent(): MovementIntent {
+  private readIntent(): MovementIntent & { attackByTouch: boolean } {
     const touch = this.touchControls?.read();
     const keyboard = this.inputController?.read(touch?.capturedPointerIds);
     return {
@@ -210,7 +216,30 @@ export class GameScene extends Phaser.Scene {
       // Pointer-driven aim applies only to real mouse/pointer attack, never to virtual touch buttons.
       attackByPointer: !!keyboard?.attackByPointer,
       dashPressed: !!(touch?.dashPressed || keyboard?.dashPressed),
+      // Only mobile Attack button provides touch auto-aim; screen taps never trigger attack (#2, #5).
+      attackByTouch: !!touch?.attackByTouch && !!touch?.attackHeld,
     };
+  }
+
+  private getNearestEnemyTarget(): { x: number; y: number } | null {
+    if (!this.player || !this.waveController) return null;
+    const px = this.player.getBodyObject().x;
+    const py = this.player.getBodyObject().y;
+    let best: { x: number; y: number } | null = null;
+    let bestD2 = Number.POSITIVE_INFINITY;
+    for (const enemy of this.waveController.getEnemies()) {
+      if (enemy.isDead()) continue;
+      const ex = enemy.getBodyObject().x;
+      const ey = enemy.getBodyObject().y;
+      const dx = ex - px;
+      const dy = ey - py;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = { x: ex, y: ey };
+      }
+    }
+    return best;
   }
 
   private updateVignette(delta: number, advanceFlash: boolean): void {

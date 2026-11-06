@@ -42,8 +42,12 @@ export class KeyboardInput {
   }
 
   public read(ignoredPointerIds?: ReadonlySet<number>): MovementIntent {
+    // Ignore virtual/mobile control pointers. On touch devices, screen taps must NOT trigger attack (#5);
+    // only the Attack control/button (or keyboard J) may trigger attacks. Mouse pointer attack remains for PC.
     const active = this.scene.input.activePointer;
-    const pointerDown = active.isDown && !(ignoredPointerIds?.has(active.id) ?? false);
+    const ignored = ignoredPointerIds?.has(active.id) ?? false;
+    const isTouchPointer = !!(active as Phaser.Input.Pointer & { wasTouch?: boolean }).wasTouch;
+    const pointerDown = active.isDown && !ignored && !isTouchPointer;
     const attackHeld = pointerDown || this.keys.attackJ.isDown;
 
     return {

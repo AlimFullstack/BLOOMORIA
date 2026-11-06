@@ -215,7 +215,12 @@ export class Player {
     this.attackTargets.add(target);
   }
 
-  public update(intent: MovementIntent, delta: number, lookTarget: LookTarget = null): void {
+  public update(
+    intent: MovementIntent,
+    delta: number,
+    lookTarget: LookTarget = null,
+    aimTarget: LookTarget = null,
+  ): void {
     if (this.dead) {
       this.updateDeathEffect(delta);
       return;
@@ -267,7 +272,7 @@ export class Player {
     this.wasOnGround = onGround;
 
     if (intent.attackHeld) {
-      this.tryAttack(intent.attackByPointer, lookTarget);
+      this.tryAttack(intent.attackByPointer, lookTarget, aimTarget);
     }
 
     this.state = this.resolveState(this.isDashing() ? this.dashDirection : horizontal, onGround);
@@ -319,14 +324,20 @@ export class Player {
     AudioManager.playerDash();
   }
 
-  private tryAttack(byPointer: boolean, lookTarget: LookTarget): void {
+  private tryAttack(
+    byPointer: boolean,
+    lookTarget: LookTarget,
+    aimTarget: LookTarget = null,
+  ): void {
     if (this.attackCooldownRemainingMs > 0 || this.attackRemainingMs > 0) {
       return;
     }
 
-    if (byPointer && lookTarget) {
-      const dx = lookTarget.x - this.bodyObject.x;
-      const dy = lookTarget.y - this.bodyObject.y;
+    // Mouse pointer attack (PC) aims at cursor. Mobile/keyboard may provide nearest-enemy aimTarget.
+    const target = byPointer && lookTarget ? lookTarget : aimTarget;
+    if (target) {
+      const dx = target.x - this.bodyObject.x;
+      const dy = target.y - this.bodyObject.y;
       const len = Math.hypot(dx, dy);
       if (len > 0.001) {
         this.attackDirectionX = dx / len;
