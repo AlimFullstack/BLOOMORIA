@@ -17,6 +17,9 @@ export function createPhaserGame(): Phaser.Game {
       width: APP_CONFIG.scale.width,
       height: APP_CONFIG.scale.height,
     },
+    input: {
+      activePointers: 5,
+    },
     physics: APP_CONFIG.physics,
     scene: [BootScene, GameScene, PauseScene],
   });

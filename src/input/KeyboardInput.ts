@@ -41,8 +41,9 @@ export class KeyboardInput {
     };
   }
 
-  public read(): MovementIntent {
-    const pointerDown = this.scene.input.activePointer.isDown;
+  public read(ignoredPointerIds?: ReadonlySet<number>): MovementIntent {
+    const active = this.scene.input.activePointer;
+    const pointerDown = active.isDown && !(ignoredPointerIds?.has(active.id) ?? false);
     const attackHeld = pointerDown || this.keys.attackJ.isDown;
 
     return {

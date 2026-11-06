@@ -7,11 +7,12 @@ import { Player } from '../entities/player/Player';
 import { PLAYER_BALANCE } from '../data/balance/player.balance';
 import { pickRandomUpgrades } from '../data/upgrades/upgrade.catalog';
 import type { UpgradeDefinition } from '../data/upgrades/upgrade.types';
-import { KeyboardInput } from '../input/KeyboardInput';
+import { KeyboardInput, type MovementIntent } from '../input/KeyboardInput';
 import { WaveController } from '../systems/WaveController';
 import { BossHealthHud } from '../ui/BossHealthHud';
 import { DamageVignette } from '../ui/DamageVignette';
 import { GameOverUi } from '../ui/GameOverUi';
+import { MobileTouchControls } from '../ui/MobileTouchControls';
 import { PauseButton } from '../ui/PauseButton';
 import { PlayerHealthHud } from '../ui/PlayerHealthHud';
 import { UpgradeSelectionUi } from '../ui/UpgradeSelectionUi';
@@ -31,6 +32,7 @@ export class GameScene extends Phaser.Scene {
   private upgradeUi?: UpgradeSelectionUi;
   private gameOverUi?: GameOverUi;
   private pauseButton?: PauseButton;
+  private touchControls?: MobileTouchControls;
   private upgradeSelectionActive = false;
   private runOver = false;
   private upgradesCollected = 0;
@@ -66,6 +68,12 @@ export class GameScene extends Phaser.Scene {
     );
     this.gameOverUi = new GameOverUi(this, () => this.restartRun());
     this.pauseButton = new PauseButton(this, () => this.openPauseMenu());
+    this.touchControls = new MobileTouchControls(this, {
+      // Read real ability cooldown state from the player (no independent timers).
+      attackCooldown: () =>
+        this.player?.getAttackCooldownState() ?? { remainingMs: 0, durationMs: 1 },
+      dashCooldown: () => this.player?.getDashCooldownState() ?? { remainingMs: 0, durationMs: 1 },
+    });
 
     const platforms = this.arena.getPlatformGroup();
     this.physics.add.collider(this.player.getBodyObject(), platforms);
@@ -87,12 +95,15 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.pauseButton?.setVisible(this.canPause());
+    this.updateTouchControlsVisibility();
+    this.touchControls?.updateVisuals();
     if (this.shouldHandlePauseToggle()) {
       this.openPauseMenu();
       return;
     }
 
     if (this.runOver) {
+      this.touchControls?.releaseAll();
       this.player.update(
         {
           left: false,
@@ -119,6 +130,7 @@ export class GameScene extends Phaser.Scene {
       bossActive: !!this.waveController.getActiveBoss(),
     });
     if (paused) {
+      this.touchControls?.releaseAll();
       this.player.update(
         {
           left: false,
@@ -134,7 +146,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       const pointer = this.input.activePointer;
       const lookTarget = pointer ? { x: pointer.worldX, y: pointer.worldY } : null;
-      this.player.update(this.inputController.read(), delta, lookTarget);
+      this.player.update(this.readIntent(), delta, lookTarget);
     }
 
     const target = this.player.getBodyObject();
@@ -160,6 +172,34 @@ export class GameScene extends Phaser.Scene {
     this.renderHud();
     this.updateWaveBanner(delta, paused);
     this.updateVignette(delta, !paused && !this.scene.isPaused());
+  }
+
+  private updateTouchControlsVisibility(): void {
+    // Touch controls: shown only on touch-capable devices and only during active gameplay.
+    // Hidden during pause overlay, upgrade selection, and game over to avoid blocking menus.
+    const pauseScene = this.scene.get('PauseScene');
+    const pauseActive = pauseScene.scene.isActive();
+    const show =
+      !this.runOver &&
+      !this.upgradeSelectionActive &&
+      !pauseActive &&
+      !this.player?.isDead() &&
+      !this.gameOverUi?.isActive();
+    this.touchControls?.setVisible(show);
+  }
+
+  private readIntent(): MovementIntent {
+    const touch = this.touchControls?.read();
+    const keyboard = this.inputController?.read(touch?.capturedPointerIds);
+    return {
+      left: !!(touch?.left || keyboard?.left),
+      right: !!(touch?.right || keyboard?.right),
+      jumpPressed: !!(touch?.jumpPressed || keyboard?.jumpPressed),
+      attackHeld: !!(touch?.attackHeld || keyboard?.attackHeld),
+      // Pointer-driven aim applies only to real mouse/pointer attack, never to virtual touch buttons.
+      attackByPointer: !!keyboard?.attackByPointer,
+      dashPressed: !!(touch?.dashPressed || keyboard?.dashPressed),
+    };
   }
 
   private updateVignette(delta: number, advanceFlash: boolean): void {
@@ -317,6 +357,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.canPause()) {
       return;
     }
+    this.touchControls?.releaseAll();
     this.scene.launch('PauseScene');
     this.scene.pause();
   }
@@ -337,6 +378,8 @@ export class GameScene extends Phaser.Scene {
     this.runOver = false;
     this.upgradeSelectionActive = false;
     this.upgradesCollected = 0;
+    this.touchControls?.destroy();
+    this.touchControls = undefined;
     this.gameOverUi?.destroy();
     this.gameOverUi = undefined;
     this.upgradeUi?.destroy();

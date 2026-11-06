@@ -93,6 +93,21 @@ export class Player {
     return this.attackDamage;
   }
 
+  public getAttackCooldownState(): { remainingMs: number; durationMs: number } {
+    return {
+      remainingMs: Math.max(0, this.attackCooldownRemainingMs),
+      // Current real cooldown stat (attack speed upgrades affect this); reflects actual ability timing.
+      durationMs: Math.max(1, this.attackCooldownMs),
+    };
+  }
+
+  public getDashCooldownState(): { remainingMs: number; durationMs: number } {
+    return {
+      remainingMs: Math.max(0, this.dashCooldownRemainingMs),
+      durationMs: Math.max(1, this.dashCooldownMs),
+    };
+  }
+
   public consumeDamageFlash(): boolean {
     if (!this.damageFlashPending) return false;
     this.damageFlashPending = false;
