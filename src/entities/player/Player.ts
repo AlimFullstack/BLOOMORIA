@@ -279,7 +279,12 @@ export class Player {
       return false;
     }
 
-    this.hp = Math.max(0, this.hp - amount);
+    // Enemy->player damage only: round down to integer at application (1.9->1, 0.5->0). Never negative.
+    const dealt = Math.max(0, Math.floor(amount));
+    if (dealt <= 0) {
+      return false;
+    }
+    this.hp = Math.max(0, this.hp - dealt);
     this.invulnerabilityRemainingMs = this.invulnerabilityMs;
     this.damageFlashPending = true;
     AudioManager.playerDamage();

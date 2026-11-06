@@ -552,7 +552,15 @@ export class MobileTouchControls {
   }
 
   private toggleFullscreen = (): void => {
-    // Only from a user gesture (wired to button pointerdown). Never auto-trigger.
+    // Only from a user gesture (wired to button pointerdown). Never auto-trigger and never loop.
+    this.requestFullscreen('user');
+  };
+
+  /**
+   * Best-effort fullscreen request. 'auto' is used for one-time load/first-gesture fallback attempts;
+   * browsers typically reject without a user gesture, so failures are swallowed and never retried in loops.
+   */
+  public requestFullscreen(source: 'user' | 'auto'): void {
     if (!this.fullscreenAvailable || typeof document === 'undefined') {
       this.updateFullscreenButtonState();
       return;
@@ -565,13 +573,15 @@ export class MobileTouchControls {
     }
     try {
       if (this.isInFullscreen()) {
-        const result = exitFullscreenSafe(doc);
-        void Promise.resolve(result)
-          .catch(() => undefined)
-          .finally(() => {
-            this.updateFullscreenButtonState();
-            safeScaleRefresh(this.scene);
-          });
+        if (source === 'user') {
+          const result = exitFullscreenSafe(doc);
+          void Promise.resolve(result)
+            .catch(() => undefined)
+            .finally(() => {
+              this.updateFullscreenButtonState();
+              safeScaleRefresh(this.scene);
+            });
+        }
         return;
       }
       const result = requestFullscreenSafe(target);
@@ -583,11 +593,11 @@ export class MobileTouchControls {
           safeScaleRefresh(this.scene);
         });
     } catch {
-      // Missing/blocked Fullscreen API (e.g. iOS Safari) must not break gameplay.
+      // Missing/blocked Fullscreen API (e.g. iOS Safari / gesture restriction) must not break gameplay.
       this.updateFullscreenButtonState();
       safeScaleRefresh(this.scene);
     }
-  };
+  }
 
   private attachSafetyHandlers(): void {
     // Release controls if the pointer system reports an interruption.
@@ -599,22 +609,25 @@ export class MobileTouchControls {
     dashCooldown: AbilityCooldownProvider;
   }): void {
     // Initial positions; layout() places them with safe-area awareness.
+    // Phase 11.8: larger hit areas for all 5 gameplay buttons (visuals/hit share size; no overlap).
     const cfgs: ButtonConfig[] = [
-      { id: 'left', label: 'LEFT', x: 0, y: 0, w: 78, h: 78, hold: true },
-      { id: 'right', label: 'RIGHT', x: 0, y: 0, w: 78, h: 78, hold: true },
-      { id: 'up', label: 'JUMP', x: 0, y: 0, w: 78, h: 78, hold: false },
+      { id: 'left', label: 'LEFT', x: 0, y: 0, w: 96, h: 96, hold: true },
+      { id: 'right', label: 'RIGHT', x: 0, y: 0, w: 96, h: 96, hold: true },
+      { id: 'up', label: 'JUMP', x: 0, y: 0, w: 96, h: 96, hold: false },
       {
         id: 'attack',
         label: 'ATK',
         x: 0,
         y: 0,
-        w: 88,
-        h: 88,
+        w: 112,
+        h: 112,
         hold: true,
       },
-      { id: 'dash', label: 'DASH', x: 0, y: 0, w: 88, h: 88, hold: false },
-      // Small mobile-only fullscreen toggle (no gameplay effect, user gesture only).
-      {
+      { id: 'dash', label: 'DASH', x: 0, y: 0, w: 112, h: 112, hold: false },
+    ];
+    // Small mobile-only fullscreen toggle (no gameplay effect, user gesture only). Shown only when API available.
+    if (this.fullscreenAvailable) {
+      cfgs.push({
         id: 'fullscreen',
         label: 'FULL',
         x: 0,
@@ -623,8 +636,8 @@ export class MobileTouchControls {
         h: 40,
         hold: false,
         onAction: this.toggleFullscreen,
-      },
-    ];
+      });
+    }
     for (const cfg of cfgs) {
       const provider =
         cfg.id === 'attack'
@@ -643,15 +656,15 @@ export class MobileTouchControls {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
     const inset = readSafeInsets();
-    const margin = 16;
+    const margin = 14;
     const gap = 10;
     // Left cluster bottom-left: [Left][Right] with [Jump] above (easy thumb reach).
     const leftBtn = this.buttonById.get('left');
     const rightBtn = this.buttonById.get('right');
     const upBtn = this.buttonById.get('up');
     if (leftBtn && rightBtn && upBtn) {
-      const bw = 78;
-      const bh = 78;
+      const bw = 96;
+      const bh = 96;
       const baseY = h - margin - inset.bottom - bh / 2;
       const leftX = margin + inset.left + bw / 2;
       leftBtn.setPosition(leftX, baseY);
@@ -659,29 +672,28 @@ export class MobileTouchControls {
       // Jump above the gap between left/right for comfortable access.
       upBtn.setPosition(leftX + (bw + gap) / 2, baseY - bh - gap);
     }
-    // Right cluster bottom-right: [Dash] [Attack] (Attack primary/larger feel area on edge).
+    // Right cluster bottom-right: [Dash] [Attack] (Attack primary/larger hit area on edge).
     const attackBtn = this.buttonById.get('attack');
     const dashBtn = this.buttonById.get('dash');
     if (attackBtn && dashBtn) {
-      const aw = 88;
-      const ah = 88;
-      const dw = 88;
-      const dh = 88;
+      const aw = 112;
+      const ah = 112;
+      const dw = 112;
+      const dh = 112;
       const baseY = h - margin - inset.bottom - ah / 2;
       const attackX = w - margin - inset.right - aw / 2;
       attackBtn.setPosition(attackX, baseY);
       dashBtn.setPosition(attackX - aw / 2 - gap - dw / 2, baseY - (ah - dh) / 2);
     }
-    // Small fullscreen toggle top-right (mobile-only), respecting safe area and pause button.
+    // Small fullscreen toggle (mobile-only, when API available) top-right, left of PauseButton (w-40,36,44x36).
     const fsBtn = this.buttonById.get('fullscreen');
     if (fsBtn) {
       const fw = 52;
       const fh = 40;
-      // PauseButton sits at (w - 40, 36) size 44x36; place fullscreen to its left.
-      const fsX = w - margin - inset.right - fw / 2 - 44 - gap;
-      const fsY = margin + inset.bottom * 0 + fh / 2 + Math.max(0, inset.right ? 0 : 0);
-      fsBtn.setPosition(fsX, Math.max(margin + fh / 2, 36));
-      void fsY; // y anchored near top HUD; pause occupies rightmost spot.
+      const pauseW = 44;
+      const fsX = w - margin - inset.right - pauseW - gap - fw / 2;
+      const fsY = 36; // align vertically with pause button center
+      fsBtn.setPosition(fsX, Math.max(margin + fh / 2, fsY));
     }
   }
 }
