@@ -109,7 +109,8 @@ export function scaleEnemyBalance(base: EnemyBalance, bossesKilled: number): Ene
     maxHp: getProgressionMaxHp(base.maxHp, multiplier),
     attackDamage: getProgressionAttackDamage(base.attackDamage, multiplier),
     slamDamage: getProgressionAttackDamage(base.slamDamage, multiplier),
-    moveSpeed: getProgressionMoveSpeed(base.moveSpeed, multiplier),
+    // Enemy movement speed does not scale with boss-kill progression.
+    moveSpeed: base.moveSpeed,
     attackCooldownMs: getProgressionAttackCooldownMs(base.attackCooldownMs, multiplier),
     slamCooldownMs: getProgressionAttackCooldownMs(base.slamCooldownMs, multiplier, 500),
     projectileSpeed: getProgressionProjectileSpeed(base.projectileSpeed, multiplier),

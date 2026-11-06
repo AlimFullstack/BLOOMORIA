@@ -62,6 +62,7 @@ export class GameScene extends Phaser.Scene {
       this,
       (upgrade) => this.onUpgradeSelected(upgrade),
       () => this.player?.getMaxHp() ?? PLAYER_BALANCE.maxHp,
+      () => this.player?.getAttackDamage() ?? PLAYER_BALANCE.attackDamage,
     );
     this.gameOverUi = new GameOverUi(this, () => this.restartRun());
     this.pauseButton = new PauseButton(this, () => this.openPauseMenu());

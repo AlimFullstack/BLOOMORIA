@@ -4,12 +4,12 @@ export const UPGRADE_CATALOG: readonly UpgradeDefinition[] = [
   {
     id: 'max_hp',
     name: 'Vital Core',
-    description: 'Increase Max HP (calculated at pick) and restore gained HP',
+    description: '+Max HP (calculated at pick)',
   },
   {
     id: 'damage',
     name: 'Sharp Edge',
-    description: '+10% Attack Damage',
+    description: 'Increase attack damage (calculated at pick)',
   },
   {
     id: 'move_speed',
@@ -24,7 +24,7 @@ export const UPGRADE_CATALOG: readonly UpgradeDefinition[] = [
   {
     id: 'heal',
     name: 'Mend',
-    description: 'Restore 10% HP (up to max)',
+    description: '+HP (Heal, calculated at pick)',
   },
 ] as const;
 

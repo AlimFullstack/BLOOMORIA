@@ -12,6 +12,7 @@ import {
 
 import {
   getHealthUpgradeBonusHp,
+  getDamageUpgradeBonus,
   getHealAmountTenPercent,
 } from '../../data/upgrades/healthUpgrade';
 
@@ -30,7 +31,6 @@ export class Player {
   private attackDamage: number = PLAYER_BALANCE.attackDamage;
   private moveSpeed: number = PLAYER_BALANCE.moveSpeed;
   private attackCooldownMs: number = PLAYER_BALANCE.attackCooldownMs;
-  private damageSteps = 0;
   private moveSpeedSteps = 0;
   private attackSpeedSteps = 0;
   private readonly jumpSpeed: number = PLAYER_BALANCE.jumpSpeed;
@@ -130,10 +130,14 @@ export class Player {
         this.body.setMaxVelocity(Math.max(this.moveSpeed, this.dashSpeed), 1600);
         break;
       }
-      case 'damage':
-        this.damageSteps += 1;
-        this.recalcStatsFromBase();
+      case 'damage': {
+        // Fixed integer bonus computed once at selection time; minimum +1.
+        this.attackDamage = Math.max(
+          0.1,
+          this.attackDamage + getDamageUpgradeBonus(this.attackDamage),
+        );
         break;
+      }
       case 'move_speed':
         this.moveSpeedSteps += 1;
         this.recalcStatsFromBase();
@@ -156,12 +160,8 @@ export class Player {
   }
 
   private recalcStatsFromBase(): void {
-    // max HP is handled exclusively by the max_hp upgrade (fixed bonus at pick time). Other upgrades
+    // max HP and attack damage are handled by their upgrades (fixed bonus at pick time). Other upgrades
     // recalculate from PLAYER_BALANCE base values and their own step counts only.
-    this.attackDamage = Math.max(
-      0.1,
-      Math.round(PLAYER_BALANCE.attackDamage * (1 + 0.1 * this.damageSteps) * 10) / 10,
-    );
     this.moveSpeed = Math.max(
       1,
       Math.round(PLAYER_BALANCE.moveSpeed * (1 + 0.1 * this.moveSpeedSteps)),
@@ -170,7 +170,6 @@ export class Player {
       MIN_ATTACK_COOLDOWN_MS,
       Math.round(PLAYER_BALANCE.attackCooldownMs / (1 + 0.1 * this.attackSpeedSteps)),
     );
-    this.body.setMaxVelocity(Math.max(this.moveSpeed, this.dashSpeed), 1600);
     this.hp = Math.min(this.hp, this.maxHp);
   }
 

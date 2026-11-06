@@ -1,7 +1,11 @@
 import Phaser from 'phaser';
 import type { UpgradeDefinition } from '../data/upgrades/upgrade.types';
 import { t, type TranslationKey } from '../i18n/i18n';
-import { getHealthUpgradeBonusHp } from '../data/upgrades/healthUpgrade';
+import {
+  getDamageUpgradeBonus,
+  getHealAmountTenPercent,
+  getHealthUpgradeBonusHp,
+} from '../data/upgrades/healthUpgrade';
 import { AudioManager } from '../audio/AudioManager';
 
 const toHex = (hex: string): number => Phaser.Display.Color.HexStringToColor(hex).color;
@@ -31,6 +35,7 @@ export class UpgradeSelectionUi {
     private readonly scene: Phaser.Scene,
     onSelect: (upgrade: UpgradeDefinition) => void,
     private readonly getCurrentMaxHp: () => number,
+    private readonly getCurrentAttackDamage: () => number,
   ) {
     const w = scene.scale.width;
     const h = scene.scale.height;
@@ -90,7 +95,7 @@ export class UpgradeSelectionUi {
       const name = card.getByName('name') as Phaser.GameObjects.Text | null;
       const desc = card.getByName('desc') as Phaser.GameObjects.Text | null;
       name?.setText(t(`upgrade.${upgrade.id}.name` as TranslationKey));
-      desc?.setText(this.getUpgradeDescription(upgrade));
+      desc?.setText(this.getUpgradeDescription(upgrade, this.getCurrentMaxHp()));
       this.setCardHover(card, false);
     }
   }
@@ -115,11 +120,20 @@ export class UpgradeSelectionUi {
   private getUpgradeDescription(
     upgrade: UpgradeDefinition,
     currentMaxHp = this.getCurrentMaxHp(),
+    currentAttackDamage = this.getCurrentAttackDamage(),
   ): string {
     if (upgrade.id === 'max_hp') {
       // Runtime applies the same computed value at pick time; UI text uses current max HP.
       const bonusHp = getHealthUpgradeBonusHp(currentMaxHp);
       return t('upgrade.max_hp.desc', { bonus: bonusHp });
+    }
+    if (upgrade.id === 'damage') {
+      const bonus = getDamageUpgradeBonus(currentAttackDamage);
+      return t('upgrade.damage.desc', { bonus });
+    }
+    if (upgrade.id === 'heal') {
+      const amount = getHealAmountTenPercent(currentMaxHp);
+      return t('upgrade.heal.desc', { amount });
     }
     return t(`upgrade.${upgrade.id}.desc` as TranslationKey);
   }
