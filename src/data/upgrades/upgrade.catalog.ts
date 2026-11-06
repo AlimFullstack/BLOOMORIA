@@ -4,7 +4,7 @@ export const UPGRADE_CATALOG: readonly UpgradeDefinition[] = [
   {
     id: 'max_hp',
     name: 'Vital Core',
-    description: '+10% Max HP and restore 10% HP',
+    description: 'Increase Max HP (calculated at pick) and restore gained HP',
   },
   {
     id: 'damage',

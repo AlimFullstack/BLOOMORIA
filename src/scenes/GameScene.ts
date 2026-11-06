@@ -57,7 +57,12 @@ export class GameScene extends Phaser.Scene {
     this.waveHud = new WaveHud(this);
     this.waveBanner = new WaveAnnouncementBanner(this);
     this.bossHud = new BossHealthHud(this);
-    this.upgradeUi = new UpgradeSelectionUi(this, (upgrade) => this.onUpgradeSelected(upgrade));
+    // getCurrentMaxHp provides the actual max HP at offer/refresh time for max_hp card text.
+    this.upgradeUi = new UpgradeSelectionUi(
+      this,
+      (upgrade) => this.onUpgradeSelected(upgrade),
+      () => this.player?.getMaxHp() ?? PLAYER_BALANCE.maxHp,
+    );
     this.gameOverUi = new GameOverUi(this, () => this.restartRun());
     this.pauseButton = new PauseButton(this, () => this.openPauseMenu());
 

@@ -10,6 +10,11 @@ import {
   type PlayerVisualState,
 } from './PlayerView';
 
+import {
+  getHealthUpgradeBonusHp,
+  getHealAmountTenPercent,
+} from '../../data/upgrades/healthUpgrade';
+
 type UpgradeId = 'max_hp' | 'damage' | 'move_speed' | 'attack_speed' | 'heal';
 
 const MIN_ATTACK_COOLDOWN_MS = 120;
@@ -25,7 +30,6 @@ export class Player {
   private attackDamage: number = PLAYER_BALANCE.attackDamage;
   private moveSpeed: number = PLAYER_BALANCE.moveSpeed;
   private attackCooldownMs: number = PLAYER_BALANCE.attackCooldownMs;
-  private maxHpSteps = 0;
   private damageSteps = 0;
   private moveSpeedSteps = 0;
   private attackSpeedSteps = 0;
@@ -117,11 +121,15 @@ export class Player {
     }
     const id = upgradeId as UpgradeId;
     switch (id) {
-      case 'max_hp':
-        this.maxHpSteps += 1;
-        this.recalcStatsFromBase();
-        this.hp = Math.min(this.maxHp, this.hp + this.healAmountForTenPercent());
+      case 'max_hp': {
+        // Calculated once at selection time from current max HP (integer, min 1). Not percent-stacked.
+        const bonusHp = getHealthUpgradeBonusHp(this.maxHp);
+        this.maxHp += bonusHp;
+        // Preserve existing heal-on-pick intent by restoring the gained capacity (capped to new max).
+        this.hp = Math.min(this.maxHp, this.hp + bonusHp);
+        this.body.setMaxVelocity(Math.max(this.moveSpeed, this.dashSpeed), 1600);
         break;
+      }
       case 'damage':
         this.damageSteps += 1;
         this.recalcStatsFromBase();
@@ -143,15 +151,13 @@ export class Player {
   }
 
   private healAmountForTenPercent(): number {
-    return Math.max(1, Math.round(this.maxHp * 0.1 * 10) / 10);
+    // Integer heal: 10% of current max HP, minimum 1 (consistent with percent-of-max rounding).
+    return getHealAmountTenPercent(this.maxHp);
   }
 
   private recalcStatsFromBase(): void {
-    const prevMaxHp = this.maxHp;
-    this.maxHp = Math.max(
-      1,
-      Math.round(PLAYER_BALANCE.maxHp * (1 + 0.1 * this.maxHpSteps) * 10) / 10,
-    );
+    // max HP is handled exclusively by the max_hp upgrade (fixed bonus at pick time). Other upgrades
+    // recalculate from PLAYER_BALANCE base values and their own step counts only.
     this.attackDamage = Math.max(
       0.1,
       Math.round(PLAYER_BALANCE.attackDamage * (1 + 0.1 * this.damageSteps) * 10) / 10,
@@ -165,11 +171,7 @@ export class Player {
       Math.round(PLAYER_BALANCE.attackCooldownMs / (1 + 0.1 * this.attackSpeedSteps)),
     );
     this.body.setMaxVelocity(Math.max(this.moveSpeed, this.dashSpeed), 1600);
-    if (this.maxHp < prevMaxHp) {
-      this.hp = Math.min(this.hp, this.maxHp);
-    } else if (this.maxHp > prevMaxHp) {
-      this.hp = Math.min(this.maxHp, this.hp);
-    }
+    this.hp = Math.min(this.hp, this.maxHp);
   }
 
   public isDeathEffectFinished(): boolean {

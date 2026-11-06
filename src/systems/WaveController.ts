@@ -223,8 +223,9 @@ export class WaveController {
   private beginNextWave(intermissionMs: number): void {
     this.wave += 1;
     this.bossWave = this.wave % BOSS_WAVE_INTERVAL === 0;
-    // Keep the ordinary wave formula (2 + wave). Boss waves also include regular enemies.
-    this.pendingSpawns = 2 + this.wave;
+    // Ordinary wave formula: 2 + wave regular enemies. Boss waves have half as many regular enemies (integer, floor).
+    const basePendingSpawns = 2 + this.wave;
+    this.pendingSpawns = this.bossWave ? Math.floor(basePendingSpawns / 2) : basePendingSpawns;
     this.bossSpawnPending = this.bossWave;
     this.intermissionMs = intermissionMs;
     this.spawnTimerMs = intermissionMs <= 0 ? 250 : 0;

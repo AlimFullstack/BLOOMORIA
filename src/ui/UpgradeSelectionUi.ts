@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { UpgradeDefinition } from '../data/upgrades/upgrade.types';
 import { t, type TranslationKey } from '../i18n/i18n';
+import { getHealthUpgradeBonusHp } from '../data/upgrades/healthUpgrade';
 import { AudioManager } from '../audio/AudioManager';
 
 const toHex = (hex: string): number => Phaser.Display.Color.HexStringToColor(hex).color;
@@ -24,10 +25,12 @@ export class UpgradeSelectionUi {
   private readonly cards: Phaser.GameObjects.Container[] = [];
   private readonly hitAreas: Phaser.GameObjects.Rectangle[] = [];
   private active = false;
+  private lastOffers: readonly UpgradeDefinition[] = [];
 
   constructor(
     private readonly scene: Phaser.Scene,
     onSelect: (upgrade: UpgradeDefinition) => void,
+    private readonly getCurrentMaxHp: () => number,
   ) {
     const w = scene.scale.width;
     const h = scene.scale.height;
@@ -71,6 +74,7 @@ export class UpgradeSelectionUi {
 
   public show(upgrades: readonly UpgradeDefinition[]): void {
     this.active = true;
+    this.lastOffers = upgrades;
     this.refreshText();
     AudioManager.uiUpgradeAppear();
     this.container.setVisible(true);
@@ -86,7 +90,7 @@ export class UpgradeSelectionUi {
       const name = card.getByName('name') as Phaser.GameObjects.Text | null;
       const desc = card.getByName('desc') as Phaser.GameObjects.Text | null;
       name?.setText(t(`upgrade.${upgrade.id}.name` as TranslationKey));
-      desc?.setText(t(`upgrade.${upgrade.id}.desc` as TranslationKey));
+      desc?.setText(this.getUpgradeDescription(upgrade));
       this.setCardHover(card, false);
     }
   }
@@ -94,14 +98,30 @@ export class UpgradeSelectionUi {
   public refreshText(): void {
     this.titleText.setText(t('upgrade.waveCleared'));
     this.subtitleText.setText(t('upgrade.chooseOne'));
-    for (const card of this.cards) {
-      const upgrade = card.getData('upgrade') as UpgradeDefinition | undefined;
+    // Use the same max HP snapshot for all cards in this offer/refresh to keep UI consistent.
+    const currentMaxHp = this.getCurrentMaxHp();
+    for (let i = 0; i < this.cards.length; i += 1) {
+      const card = this.cards[i];
+      const upgrade =
+        (card.getData('upgrade') as UpgradeDefinition | undefined) ?? this.lastOffers[i];
       if (!upgrade) continue;
       const name = card.getByName('name') as Phaser.GameObjects.Text | null;
       const desc = card.getByName('desc') as Phaser.GameObjects.Text | null;
       name?.setText(t(`upgrade.${upgrade.id}.name` as TranslationKey));
-      desc?.setText(t(`upgrade.${upgrade.id}.desc` as TranslationKey));
+      desc?.setText(this.getUpgradeDescription(upgrade, currentMaxHp));
     }
+  }
+
+  private getUpgradeDescription(
+    upgrade: UpgradeDefinition,
+    currentMaxHp = this.getCurrentMaxHp(),
+  ): string {
+    if (upgrade.id === 'max_hp') {
+      // Runtime applies the same computed value at pick time; UI text uses current max HP.
+      const bonusHp = getHealthUpgradeBonusHp(currentMaxHp);
+      return t('upgrade.max_hp.desc', { bonus: bonusHp });
+    }
+    return t(`upgrade.${upgrade.id}.desc` as TranslationKey);
   }
 
   public hide(): void {

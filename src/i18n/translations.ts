@@ -1,4 +1,4 @@
-import type { Language } from '../settings/GameSettings';
+﻿import type { Language } from '../settings/GameSettings';
 
 export type TranslationKey = keyof typeof en;
 
@@ -40,7 +40,7 @@ const en = {
   'gameOver.upgrades': 'Upgrades collected: {upgrades}',
   'gameOver.tryAgain': 'TRY AGAIN',
   'upgrade.max_hp.name': 'Vital Core',
-  'upgrade.max_hp.desc': '+10% Max HP and restore 10% HP',
+  'upgrade.max_hp.desc': '+{bonus} HP',
   'upgrade.damage.name': 'Sharp Edge',
   'upgrade.damage.desc': '+10% Attack Damage',
   'upgrade.move_speed.name': 'Swift Step',
@@ -89,7 +89,7 @@ const ru: Record<TranslationKey, string> = {
   'gameOver.upgrades': 'Получено улучшений: {upgrades}',
   'gameOver.tryAgain': 'ЕЩЁ РАЗ',
   'upgrade.max_hp.name': 'Живое ядро',
-  'upgrade.max_hp.desc': '+10% к макс. ОЗ и восстановить 10% ОЗ',
+  'upgrade.max_hp.desc': '+{bonus} ОЗ',
   'upgrade.damage.name': 'Острое лезвие',
   'upgrade.damage.desc': '+10% к урону атаки',
   'upgrade.move_speed.name': 'Быстрый шаг',
