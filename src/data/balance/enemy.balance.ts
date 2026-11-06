@@ -71,7 +71,7 @@ export const MIN_ENEMY_ATTACK_COOLDOWN_MS = 180;
 export const MIN_ENEMY_MOVEMENT_SPEED = 10;
 
 export function getProgressionAttackFrequencyMultiplier(bossesKilled: number): number {
-  return 1 + Math.max(0, bossesKilled) * 0.5;
+  return 1 + Math.max(0, bossesKilled) * 0.05;
 }
 
 export function getProgressionMaxHp(baseMaxHp: number, multiplier: number): number {

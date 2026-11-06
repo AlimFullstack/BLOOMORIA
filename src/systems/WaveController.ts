@@ -290,21 +290,14 @@ export class WaveController {
   }
 
   private spawnEnemy(spec: SpawnSpec, playerX: number, playerY: number): void {
-    let position = this.getSpawnPosition(playerX, playerY, spec);
-    if (!this.isSpawnPositionValid(position.x, position.y, playerX, playerY, spec)) {
-      position = {
-        x: this.getSpawnX(!this.spawnOnRight, spec.width),
-        y: spec.spawnY,
-      };
-    }
-    if (!this.isSpawnPositionValid(position.x, position.y, playerX, playerY, spec)) {
-      if (spec.type === 'colossus') {
-        this.bossSpawnPending = false;
-      } else {
-        this.pendingSpawns = Math.max(0, this.pendingSpawns - 1);
-      }
+    const position = this.findSpawnPosition(playerX, playerY, spec);
+    if (!position) {
+      // Do not drop pending spawns: crowded/edge cases would lose enemies (1-2 total, one-sided).
+      // Defer and retry on the next spawn tick while keeping wave count intact.
+      this.spawnTimerMs = 220;
       return;
     }
+
     const enemy = new Enemy(
       this.scene,
       position.x,
@@ -316,6 +309,8 @@ export class WaveController {
     );
     this.scene.physics.add.collider(enemy.getBodyObject(), this.platforms);
     this.enemies.push(enemy);
+    // Alternate side preference after a successful spawn to avoid one-sided clustering.
+    this.spawnOnRight = position.x < this.scene.scale.width / 2;
     if (spec.type === 'colossus') {
       this.bossSpawnPending = false;
     } else {
@@ -323,14 +318,39 @@ export class WaveController {
     }
   }
 
-  private getSpawnPosition(
+  private findSpawnPosition(
     playerX: number,
     playerY: number,
     spec: SpawnSpec,
-  ): { x: number; y: number } {
-    const sideRight = this.chooseSpawnSide(playerX, playerY, spec);
-    this.spawnOnRight = !sideRight;
-    return { x: this.getSpawnX(sideRight, spec.width), y: spec.spawnY };
+  ): { x: number; y: number } | null {
+    const worldWidth = this.scene.scale.width;
+    const rightX = this.getSpawnX(true, spec.width);
+    const leftX = this.getSpawnX(false, spec.width);
+    // Strict pass respects player distance and enemy clearance; relaxed pass keeps player distance
+    // but ignores crowding to avoid silently dropping pending spawns (cause of 1-2 enemy waves).
+    const candidates = [
+      { x: this.spawnOnRight ? rightX : leftX, y: spec.spawnY, strict: true },
+      { x: this.spawnOnRight ? leftX : rightX, y: spec.spawnY, strict: true },
+      { x: this.spawnOnRight ? rightX : leftX, y: spec.spawnY, strict: false },
+      { x: this.spawnOnRight ? leftX : rightX, y: spec.spawnY, strict: false },
+      { x: worldWidth * 0.2, y: spec.spawnY, strict: false },
+      { x: worldWidth * 0.8, y: spec.spawnY, strict: false },
+    ];
+    for (const candidate of candidates) {
+      if (
+        this.isSpawnPositionValid(
+          candidate.x,
+          candidate.y,
+          playerX,
+          playerY,
+          spec,
+          candidate.strict,
+        )
+      ) {
+        return { x: candidate.x, y: candidate.y };
+      }
+    }
+    return null;
   }
 
   private isSpawnPositionValid(
@@ -339,6 +359,7 @@ export class WaveController {
     playerX: number,
     playerY: number,
     spec: SpawnSpec,
+    strictEnemyClearance = true,
   ): boolean {
     const worldWidth = this.scene.scale.width;
     const worldHeight = this.scene.scale.height;
@@ -353,6 +374,9 @@ export class WaveController {
     if (Math.hypot(x - playerX, y - playerY) < safeDistance) {
       return false;
     }
+    if (!strictEnemyClearance) {
+      return true;
+    }
     for (const enemy of this.enemies) {
       if (enemy.isDead()) {
         continue;
@@ -364,28 +388,6 @@ export class WaveController {
       }
     }
     return true;
-  }
-
-  private chooseSpawnSide(playerX: number, _playerY: number, spec: SpawnSpec): boolean {
-    const preferredRight = this.spawnOnRight;
-    const worldWidth = this.scene.scale.width;
-    const rightX = worldWidth - SPAWN_X_MARGIN - Math.max(20, spec.width / 2);
-    const leftX = SPAWN_X_MARGIN + Math.max(20, spec.width / 2);
-    const safe = SPAWN_PLAYER_SAFE_DISTANCE + spec.width * 0.35;
-
-    if (preferredRight && Math.abs(rightX - playerX) >= safe) {
-      return true;
-    }
-    if (!preferredRight && Math.abs(leftX - playerX) >= safe) {
-      return false;
-    }
-    if (Math.abs(rightX - playerX) >= safe) {
-      return true;
-    }
-    if (Math.abs(leftX - playerX) >= safe) {
-      return false;
-    }
-    return playerX < worldWidth / 2;
   }
 
   private getSpawnX(right: boolean, width: number): number {
