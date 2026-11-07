@@ -30,6 +30,8 @@ export interface EnemyDeathInfo {
 }
 
 export class Enemy {
+  private static readonly ATTACK_TELEGRAPH_MS = 300;
+
   private readonly bodyObject: Phaser.GameObjects.Rectangle;
   private readonly body: Phaser.Physics.Arcade.Body;
   private readonly view: EnemyView;
@@ -44,6 +46,9 @@ export class Enemy {
   private deathRewardConsumed = false;
   private invulnerabilityRemainingMs = 0;
   private attackCooldownRemainingMs = 0;
+  private attackTelegraphRemainingMs = 0;
+  private attackTelegraphTotalMs = Enemy.ATTACK_TELEGRAPH_MS;
+  private attackTelegraphKind: 'melee' | 'ranged' | null = null;
   private attackRemainingMs = 0;
   private knockbackRemainingMs = 0;
   private knockbackDirX: -1 | 0 | 1 = 0;
@@ -200,6 +205,15 @@ export class Enemy {
     }
 
     this.tickTimers(delta);
+    const dx = targetX - this.bodyObject.x;
+    const dy = targetY - this.bodyObject.y;
+    const absDx = Math.abs(dx);
+    // Complete 300ms telegraphs before behavior; no damage/projectile/shockwave emission here.
+    this.tickAttackTelegraph(dx, dy, absDx);
+    if (this.dead) {
+      this.updateDeathEffect(delta);
+      return;
+    }
     const onGround = this.body.blocked.down || this.body.touching.down;
 
     if (this.knockbackRemainingMs > 0) {
@@ -217,19 +231,13 @@ export class Enemy {
       return;
     }
 
-    const dx = targetX - this.bodyObject.x;
-    const dy = targetY - this.bodyObject.y;
-    const absDx = Math.abs(dx);
     const playerDistance = Math.hypot(dx, dy);
     const playerFar = !this.isBoss() && playerDistance > ENEMY_AI_CONFIG.patrolDetectDistance;
     if (playerFar) {
-      // Far player: stop chase/navigation intent; patrol stays on the current platform.
       this.clearRecovery();
       this.stuckMs = 0;
     }
-    // Higher-priority combat states (knockback handled above, boss phases, active attacks)
-    // must not be overwritten by patrol movement.
-    const canPatrol = playerFar && this.attackRemainingMs <= 0;
+    const canPatrol = playerFar && this.attackRemainingMs <= 0 && !this.isAttackTelegraphing();
 
     if (this.balance.archetype === 'colossus') {
       this.updateColossus(dx, dy, absDx, onGround, targetX, delta, emitShockwave);
@@ -250,6 +258,7 @@ export class Enemy {
 
     this.render(delta);
     this.updateMovementAudio(delta, onGround);
+    this.wasOnGround = onGround;
   }
 
   private updateMovementAudio(delta: number, onGround: boolean): void {
@@ -280,6 +289,12 @@ export class Enemy {
     const inAttackRange =
       absDx <= this.balance.attackRange && Math.abs(dy) <= this.balance.attackHeight;
 
+    if (this.isAttackTelegraphing()) {
+      this.body.setVelocityX(0);
+      this.updateFacingTowardTarget(dx); // visual tracking only; commit uses locked direction
+      this.clearRecovery();
+      return;
+    }
     if (this.attackRemainingMs > 0) {
       this.body.setVelocityX(0);
       this.clearRecoveryIfProgressPossible(dx, dy, absDx, onGround);
@@ -289,6 +304,10 @@ export class Enemy {
       this.body.setVelocityX(0);
       this.updateFacingTowardTarget(dx);
       this.tryAttack();
+      if (this.isAttackTelegraphing()) {
+        this.clearRecovery();
+        return;
+      }
       this.clearRecovery();
       return;
     }
@@ -349,6 +368,7 @@ export class Enemy {
           this.bossPhaseMs = this.balance.attackDurationMs;
           this.attackRemainingMs = this.bossPhaseMs;
           this.attackTargets.clear();
+          AudioManager.enemyAttack('boss', this.audioKey);
         } else if (this.bossPhase === 'active' && this.bossPhaseMs <= 0) {
           this.finishBossAttack();
         }
@@ -397,24 +417,21 @@ export class Enemy {
     this.attackTargets.clear();
     this.attackDirectionX = this.facing;
     if (kind === 'slam') {
-      this.bossPhaseMs = getProgressionAttackCooldownMs(
-        this.balance.slamTelegraphMs,
-        this.attackFrequencyMultiplier,
-        300,
-      );
+      // Phase 11.11: mandatory 300ms telegraph before damage/shockwave emission.
+      this.bossPhaseMs = Enemy.ATTACK_TELEGRAPH_MS;
       this.attackRemainingMs = this.bossPhaseMs;
       this.bossSlamCooldownMs = getProgressionAttackCooldownMs(
         this.balance.slamCooldownMs,
         this.attackFrequencyMultiplier,
       );
     } else {
-      this.bossPhaseMs = getProgressionAttackCooldownMs(360, this.attackFrequencyMultiplier, 140);
+      this.bossPhaseMs = Enemy.ATTACK_TELEGRAPH_MS;
       this.attackRemainingMs = this.bossPhaseMs;
       this.bossMeleeCooldownMs = getProgressionAttackCooldownMs(
         this.balance.attackCooldownMs,
         this.attackFrequencyMultiplier,
       );
-      AudioManager.enemyAttack('boss', this.audioKey);
+      // Audio delayed to active transition (after 300ms telegraph) for fairness.
     }
   }
 
@@ -476,11 +493,17 @@ export class Enemy {
       absDx <= this.balance.attackRange && Math.abs(dy) <= this.balance.attackHeight * 2.2;
     const blockedAhead = this.facing > 0 ? this.body.blocked.right : this.body.blocked.left;
 
+    if (this.isAttackTelegraphing()) {
+      this.body.setVelocityX(0);
+      return;
+    }
+
     if (this.attackRemainingMs > 0) {
       this.body.setVelocityX(0);
       const total =
         this.attackDurationTotalMs > 0 ? this.attackDurationTotalMs : this.balance.attackDurationMs;
       const progress = 1 - this.attackRemainingMs / Math.max(1, total);
+      // Projectile launched only after telegraph completed (commit); firing delayed within active window.
       if (!this.rangedShotFired && progress >= 0.55 && emitProjectile) {
         this.rangedShotFired = true;
         this.fireProjectile(targetX, targetY, emitProjectile);
@@ -585,6 +608,7 @@ export class Enemy {
     this.knockbackDirX = dirX as -1 | 1;
     this.knockbackRemainingMs = Math.max(0, kb.knockbackDurationMs);
     this.clearRecovery();
+    this.cancelAttackTelegraph();
     this.jumpAttemptMs = 0;
     if (this.bossPhase === 'idle') {
       this.attackRemainingMs = 0;
@@ -600,16 +624,112 @@ export class Enemy {
     this.body.velocity.x = Phaser.Math.Clamp(this.body.velocity.x, -maxVx, maxVx);
   }
 
+  public applyGroundSlamKnockback(
+    fromX: number,
+    fromY: number,
+    horizontal: number,
+    vertical: number,
+    durationMs: number,
+    maxSpeed: number,
+  ): void {
+    // Boss respects knockback immunity; regular enemies are pushed away from impact.
+    if (this.dead || this.isBoss() || !this.body.enable) {
+      return;
+    }
+    const dx = this.bodyObject.x - fromX;
+    const dy = this.bodyObject.y - fromY;
+    const len = Math.hypot(dx, dy);
+    const dirX = len > 0.001 ? dx / len : this.bodyObject.x >= fromX ? 1 : -1;
+    const dirY = len > 0.001 ? dy / len : -0.35;
+    const impulseX = Phaser.Math.Clamp(horizontal, 0, Math.max(0, maxSpeed));
+    const impulseY = Phaser.Math.Clamp(vertical, 0, Math.max(0, maxSpeed));
+    if (impulseX <= 0 && impulseY <= 0) {
+      return;
+    }
+    this.knockbackDirX = (dirX >= 0 ? 1 : -1) as -1 | 1;
+    this.knockbackRemainingMs = Math.max(0, durationMs);
+    this.clearRecovery();
+    this.cancelAttackTelegraph();
+    this.jumpAttemptMs = 0;
+    if (this.bossPhase === 'idle') {
+      this.attackRemainingMs = 0;
+      this.attackTargets.clear();
+      this.rangedShotFired = false;
+    }
+    this.body.setVelocityX(dirX * impulseX);
+    const up = Math.min(-impulseY * 0.45, dirY * impulseY * 0.25);
+    if (up < 0) {
+      this.body.setVelocityY(Math.min(this.body.velocity.y, up));
+    }
+    const maxVx = Math.max(this.balance.moveSpeed, impulseX, maxSpeed);
+    this.body.velocity.x = Phaser.Math.Clamp(this.body.velocity.x, -maxVx, maxVx);
+  }
+
+  public emitHitImpact(x: number, y: number, dirX: number, dirY: number): void {
+    this.view.emitHitImpact(x, y, dirX, dirY);
+  }
+
   public destroy(): void {
     this.view.destroy();
     this.body.destroy();
     this.bodyObject.destroy();
   }
 
+  private isAttackTelegraphing(): boolean {
+    return this.attackTelegraphRemainingMs > 0 && this.attackTelegraphKind !== null;
+  }
+
+  private cancelAttackTelegraph(): void {
+    this.attackTelegraphRemainingMs = 0;
+    this.attackTelegraphKind = null;
+    this.attackTelegraphTotalMs = Enemy.ATTACK_TELEGRAPH_MS;
+  }
+
   private tryAttack(): void {
-    if (this.attackCooldownRemainingMs > 0 || this.attackRemainingMs > 0) {
+    if (
+      this.attackCooldownRemainingMs > 0 ||
+      this.attackRemainingMs > 0 ||
+      this.attackTelegraphRemainingMs > 0
+    ) {
       return;
     }
+    // Phase 11.11: telegraph starts on attack decision; direction locks for the telegraphed attack.
+    this.attackDirectionX = this.facing;
+    this.attackTargets.clear();
+    this.rangedShotFired = false;
+    this.attackTelegraphKind = this.balance.archetype === 'ranger' ? 'ranged' : 'melee';
+    // Regular enemies: half warning time (boss/colossus keeps full telegraph in startBossAttack).
+    const telegraphMs = Math.round(Enemy.ATTACK_TELEGRAPH_MS / 2);
+    this.attackTelegraphTotalMs = telegraphMs;
+    this.attackTelegraphRemainingMs = telegraphMs;
+  }
+
+  private commitAttackAfterTelegraph(_dx: number, dy: number, absDx: number): void {
+    const kind = this.attackTelegraphKind;
+    this.cancelAttackTelegraph();
+    if (this.dead) return;
+    if (kind === 'ranged') {
+      const inRange =
+        absDx <= this.balance.attackRange && Math.abs(dy) <= this.balance.attackHeight * 2.2;
+      if (!inRange) return;
+      this.attackDirectionX = this.facing;
+      this.attackTargets.clear();
+      this.rangedShotFired = false;
+      this.attackDurationTotalMs = getProgressionAttackCooldownMs(
+        this.balance.attackDurationMs,
+        this.attackFrequencyMultiplier,
+        80,
+      );
+      this.attackRemainingMs = this.attackDurationTotalMs;
+      this.attackCooldownRemainingMs = getProgressionAttackCooldownMs(
+        this.balance.attackCooldownMs,
+        this.attackFrequencyMultiplier,
+      );
+      return;
+    }
+    const inAttackRange =
+      absDx <= this.balance.attackRange && Math.abs(dy) <= this.balance.attackHeight;
+    if (!inAttackRange) return;
     this.attackDirectionX = this.facing;
     this.attackTargets.clear();
     this.rangedShotFired = false;
@@ -623,11 +743,17 @@ export class Enemy {
       this.balance.attackCooldownMs,
       this.attackFrequencyMultiplier,
     );
-    if (this.balance.archetype !== 'ranger') {
-      AudioManager.enemyAttack(
-        this.balance.archetype as 'grunt' | 'brute' | 'ranger' | 'boss',
-        this.audioKey,
-      );
+    AudioManager.enemyAttack(
+      this.balance.archetype as 'grunt' | 'brute' | 'ranger' | 'boss',
+      this.audioKey,
+    );
+  }
+
+  private tickAttackTelegraph(dx: number, dy: number, absDx: number): void {
+    if (this.dead || !this.attackTelegraphKind) return;
+    // Pause-safe: timer decremented in tickTimers only while update() runs.
+    if (this.attackTelegraphRemainingMs <= 0) {
+      this.commitAttackAfterTelegraph(dx, dy, absDx);
     }
   }
 
@@ -821,6 +947,12 @@ export class Enemy {
     this.patrolTurnCooldownMs = Math.max(0, this.patrolTurnCooldownMs - delta);
     this.bossMeleeCooldownMs = Math.max(0, this.bossMeleeCooldownMs - delta);
     this.bossSlamCooldownMs = Math.max(0, this.bossSlamCooldownMs - delta);
+    if (this.attackTelegraphRemainingMs > 0 && this.balance.archetype !== 'colossus') {
+      this.attackTelegraphRemainingMs = Math.max(0, this.attackTelegraphRemainingMs - delta);
+      if (this.attackTelegraphRemainingMs <= 0) {
+        // Commit occurs in update() after recheck; keep kind/total for commit.
+      }
+    }
     if (this.attackRemainingMs > 0 && this.balance.archetype !== 'colossus') {
       this.attackRemainingMs = Math.max(0, this.attackRemainingMs - delta);
       if (this.attackRemainingMs <= 0) {
@@ -845,10 +977,10 @@ export class Enemy {
       const totalMs =
         this.bossAttack === 'slam'
           ? this.bossPhase === 'telegraph'
-            ? this.balance.slamTelegraphMs
+            ? Enemy.ATTACK_TELEGRAPH_MS
             : 260
           : this.bossPhase === 'telegraph'
-            ? 360
+            ? Enemy.ATTACK_TELEGRAPH_MS
             : this.balance.attackDurationMs;
       attack = {
         progress: totalMs > 0 ? 1 - this.bossPhaseMs / totalMs : 1,
@@ -858,6 +990,15 @@ export class Enemy {
         preparing: this.bossPhase === 'telegraph',
         kind: this.bossAttack === 'slam' ? 'slam' : 'melee',
       };
+    } else if (this.attackTelegraphRemainingMs > 0 && this.attackTelegraphKind) {
+      attack = {
+        progress: 1 - this.attackTelegraphRemainingMs / Math.max(1, this.attackTelegraphTotalMs),
+        directionX: this.attackDirectionX,
+        range: this.balance.attackRange,
+        height: this.balance.attackHeight,
+        preparing: true,
+        kind: this.attackTelegraphKind,
+      };
     } else if (this.attackRemainingMs > 0) {
       const total =
         this.attackDurationTotalMs > 0 ? this.attackDurationTotalMs : this.balance.attackDurationMs;
@@ -866,7 +1007,7 @@ export class Enemy {
         directionX: this.attackDirectionX,
         range: this.balance.attackRange,
         height: this.balance.attackHeight,
-        preparing: this.balance.archetype === 'ranger',
+        preparing: false,
         kind: this.balance.archetype === 'ranger' ? 'ranged' : 'melee',
       };
     }
@@ -875,7 +1016,8 @@ export class Enemy {
     const moving =
       Math.abs(this.body.velocity.x) > 0.1 &&
       this.bossPhase === 'idle' &&
-      this.attackRemainingMs <= 0;
+      this.attackRemainingMs <= 0 &&
+      this.attackTelegraphRemainingMs <= 0;
     this.view.render(
       this.bodyObject.x,
       this.bodyObject.y,
@@ -965,6 +1107,7 @@ export class Enemy {
     }
     this.dead = true;
     this.attackRemainingMs = 0;
+    this.cancelAttackTelegraph();
     this.bossPhase = 'idle';
     this.bossAttack = null;
     this.attackTargets.clear();
@@ -979,31 +1122,8 @@ export class Enemy {
     );
     if (!this.deathBurstStarted) {
       this.deathBurstStarted = true;
-      const floorY = this.getSupportingSurfaceTop(
-        this.bodyObject.x,
-        this.bodyObject.y + this.balance.height / 2,
-      );
-      this.view.emitDeathBurst(this.bodyObject.x, this.bodyObject.y, floorY);
+      this.view.emitDeathBurst(this.bodyObject.x, this.bodyObject.y, this.arenaPlatforms);
     }
-  }
-
-  private getSupportingSurfaceTop(x: number, bottomY: number): number {
-    let best: number | null = null;
-    for (const platform of this.arenaPlatforms) {
-      const left = platform.x - platform.width / 2;
-      const right = platform.x + platform.width / 2;
-      if (x < left - 4 || x > right + 4) {
-        continue;
-      }
-      const top = platform.y - platform.height / 2;
-      if (
-        top >= bottomY - 18 &&
-        (best === null || Math.abs(top - bottomY) < Math.abs(best - bottomY))
-      ) {
-        best = top;
-      }
-    }
-    return best ?? bottomY;
   }
 
   private updateDeathEffect(delta: number): void {

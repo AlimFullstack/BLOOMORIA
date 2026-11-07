@@ -1,6 +1,19 @@
 export type EnemyArchetype = 'grunt' | 'brute' | 'ranger' | 'colossus';
 
 export interface EnemyViewConfig {
+  shape: 'grunt' | 'brute' | 'ranger' | 'colossus';
+  // Core palette (Phase 11.14: full per-archetype identity, centralized)
+  primary: string; // main body
+  secondary: string; // secondary body/detail
+  shadow: string; // dark depth/facets
+  highlight: string; // light facets
+  border: string; // expressive outline
+  accent: string; // characteristic details/eyes/weapon accents
+  attack: string; // attack VFX
+  projectile: string; // projectile/shockwave color (fallback to attack when unused)
+  hit: string; // hit impact/sparks
+  death: string[]; // death particle palette (2-3 tones, archetype-specific)
+  // Back-compat aliases consumed by existing renderers (kept in sync with palette above)
   body: string;
   bodyDark: string;
   outline: string;
@@ -11,9 +24,6 @@ export interface EnemyViewConfig {
   swingSpark: string;
   hpFill: string;
   hpEmpty: string;
-  death: string;
-  projectile?: string;
-  shape: 'grunt' | 'brute' | 'ranger' | 'colossus';
 }
 
 export interface EnemyBalance {
@@ -51,6 +61,10 @@ export interface EnemyBalance {
   knockbackDurationMs: number;
   knockbackMaxSpeed: number;
   view: EnemyViewConfig;
+}
+
+export function projectileTelegraphHalfHeight(balance: EnemyBalance): number {
+  return Math.max(4, balance.projectileSize / 2 + 2);
 }
 
 export const ENEMY_AI_CONFIG = {
@@ -124,7 +138,7 @@ export const GRUNT_BALANCE: EnemyBalance = {
   height: 34,
   moveSpeed: 120,
   stopDistance: 28,
-  spawnY: 645,
+  spawnY: 551, // Phase 11.15: low platform top 568 (Y_LOW 580) - 34/2
   maxHp: 2,
   attackDamage: 1,
   invulnerabilityMs: 200,
@@ -148,17 +162,27 @@ export const GRUNT_BALANCE: EnemyBalance = {
   ...BASE_COMBAT,
   view: {
     shape: 'grunt',
-    body: '#E06A7A',
-    bodyDark: '#B94E5F',
-    outline: '#6A2734',
-    core: '#FFD8DE',
-    weaponBlade: '#F3DCE0',
-    weaponEdge: '#FFFFFF',
-    weaponHandle: '#6A2734',
-    swingSpark: '#FFE2E6',
-    hpFill: '#FF4D5A',
-    hpEmpty: '#3A2230',
-    death: '#E06A7A',
+    // Grunt — red (Phase 11.15: slightly reduced brightness, identity preserved)
+    primary: '#BE2235',
+    secondary: '#9E1624',
+    shadow: '#5A0D16',
+    highlight: '#E85B72',
+    border: '#30060D',
+    accent: '#E39AA8',
+    attack: '#D83F5A',
+    projectile: '#D83F5A',
+    hit: '#E8B4BE',
+    death: ['#BE2235', '#D83F5A', '#7A0E1B'],
+    body: '#BE2235',
+    bodyDark: '#7A0E1B',
+    outline: '#30060D',
+    core: '#F2D7DC',
+    weaponBlade: '#D97A8C',
+    weaponEdge: '#EBC7CF',
+    weaponHandle: '#3E0811',
+    swingSpark: '#D83F5A',
+    hpFill: '#BE2235',
+    hpEmpty: '#30060D',
   },
 };
 
@@ -183,17 +207,27 @@ export const BRUTE_BALANCE: EnemyBalance = {
   knockbackMaxSpeed: 150,
   view: {
     shape: 'brute',
-    body: '#7C5A44',
-    bodyDark: '#5A3E2F',
-    outline: '#2D1E17',
-    core: '#FFD39A',
-    weaponBlade: '#D8C3A5',
-    weaponEdge: '#FFF4D8',
-    weaponHandle: '#3B2A20',
-    swingSpark: '#FFD39A',
-    hpFill: '#FF8A3D',
-    hpEmpty: '#3A2418',
-    death: '#A56A44',
+    // Brute — brown/bronze (Phase 11.15: slightly reduced brightness)
+    primary: '#7A4F26',
+    secondary: '#916341',
+    shadow: '#3F2710',
+    highlight: '#B2885E',
+    border: '#241609',
+    accent: '#BA8E63',
+    attack: '#B06C26',
+    projectile: '#B06C26',
+    hit: '#D8BE98',
+    death: ['#7A4F26', '#996D45', '#503315'],
+    body: '#7A4F26',
+    bodyDark: '#503315',
+    outline: '#241609',
+    core: '#EADBC8',
+    weaponBlade: '#A2662D',
+    weaponEdge: '#DCC0A0',
+    weaponHandle: '#241609',
+    swingSpark: '#BA8E63',
+    hpFill: '#7A4F26',
+    hpEmpty: '#241609',
   },
 };
 
@@ -223,18 +257,27 @@ export const RANGER_BALANCE: EnemyBalance = {
   knockbackMaxSpeed: 220,
   view: {
     shape: 'ranger',
-    body: '#5FA8A0',
-    bodyDark: '#3E7A74',
-    outline: '#1E3F3B',
-    core: '#D9FFF7',
-    weaponBlade: '#CFF7FF',
-    weaponEdge: '#FFFFFF',
-    weaponHandle: '#2B5E59',
-    swingSpark: '#A8FFF0',
-    hpFill: '#4FE3C2',
-    hpEmpty: '#1E3532',
-    death: '#5FA8A0',
-    projectile: '#8FFFF0',
+    // Ranger — turquoise (Phase 11.15: slightly reduced brightness)
+    primary: '#139FA5',
+    secondary: '#0D8995',
+    shadow: '#094354',
+    highlight: '#67CFE0',
+    border: '#062A38',
+    accent: '#84DEE8',
+    attack: '#26B8A6',
+    projectile: '#2BC6CC',
+    hit: '#B4E7EC',
+    death: ['#139FA5', '#2BC6CC', '#09616F'],
+    body: '#139FA5',
+    bodyDark: '#09616F',
+    outline: '#062A38',
+    core: '#D8F5F2',
+    weaponBlade: '#4FCDBB',
+    weaponEdge: '#B6EDE5',
+    weaponHandle: '#062A38',
+    swingSpark: '#26B8A6',
+    hpFill: '#139FA5',
+    hpEmpty: '#062A38',
   },
 };
 
@@ -245,7 +288,7 @@ export const COLOSSUS_BASE_BALANCE: EnemyBalance = {
   height: 86,
   moveSpeed: 48,
   stopDistance: 52,
-  spawnY: 619,
+  spawnY: 525, // Phase 11.15: low platform top 568 (Y_LOW 580) - 86/2
   maxHp: 18,
   attackDamage: 2,
   invulnerabilityMs: 120,
@@ -275,18 +318,27 @@ export const COLOSSUS_BASE_BALANCE: EnemyBalance = {
   knockbackMaxSpeed: 0,
   view: {
     shape: 'colossus',
-    body: '#6E768C',
-    bodyDark: '#4A5163',
-    outline: '#222833',
-    core: '#FFE2A8',
-    weaponBlade: '#C9D2E3',
-    weaponEdge: '#FFFFFF',
-    weaponHandle: '#343B49',
-    swingSpark: '#FFD27A',
-    hpFill: '#FFB347',
-    hpEmpty: '#2B3040',
-    death: '#8C95AA',
-    projectile: '#FFD27A',
+    // Colossus — gray/metallic (Phase 11.15: slightly reduced brightness, remains gray)
+    primary: '#777D86',
+    secondary: '#606873',
+    shadow: '#323840',
+    highlight: '#AEB6C1',
+    border: '#191E24',
+    accent: '#919DAB',
+    attack: '#98A2AE',
+    projectile: '#8893A0',
+    hit: '#C0C7D1',
+    death: ['#777D86', '#9EA7B2', '#40474F'],
+    body: '#777D86',
+    bodyDark: '#40474F',
+    outline: '#191E24',
+    core: '#DEE4EC',
+    weaponBlade: '#A2ACB8',
+    weaponEdge: '#D1D8E2',
+    weaponHandle: '#20262D',
+    swingSpark: '#98A2AE',
+    hpFill: '#777D86',
+    hpEmpty: '#20262D',
   },
 };
 

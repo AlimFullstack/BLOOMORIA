@@ -2,7 +2,7 @@
 import { APP_CONFIG } from '../app/AppConfig';
 import { AudioManager } from '../audio/AudioManager';
 import { applyGameSettings } from '../settings/GameSettings';
-import { Arena } from '../entities/arena/Arena';
+import { Arena, isGroundSlamBlockedByPlatforms } from '../entities/arena/Arena';
 import { Player } from '../entities/player/Player';
 import { PLAYER_BALANCE } from '../data/balance/player.balance';
 import { pickRandomUpgrades } from '../data/upgrades/upgrade.catalog';
@@ -46,6 +46,7 @@ export class GameScene extends Phaser.Scene {
   public create(): void {
     AudioManager.init(this.sound);
     applyGameSettings(this.sound);
+    this.setGameplayCursor(true);
     this.cameras.main.setBackgroundColor(APP_CONFIG.backgroundColor);
     this.physics.world.setBounds(0, 0, APP_CONFIG.width, APP_CONFIG.height);
     this.cameras.main.setBounds(0, 0, APP_CONFIG.width, APP_CONFIG.height);
@@ -73,6 +74,8 @@ export class GameScene extends Phaser.Scene {
       attackCooldown: () =>
         this.player?.getAttackCooldownState() ?? { remainingMs: 0, durationMs: 1 },
       dashCooldown: () => this.player?.getDashCooldownState() ?? { remainingMs: 0, durationMs: 1 },
+      groundSlamCooldown: () =>
+        this.player?.getGroundSlamCooldownState() ?? { remainingMs: 0, durationMs: 1 },
     });
 
     const platforms = this.arena.getPlatformGroup();
@@ -120,6 +123,7 @@ export class GameScene extends Phaser.Scene {
           left: false,
           right: false,
           jumpPressed: false,
+          downPressed: false,
           attackHeld: false,
           attackByPointer: false,
           dashPressed: false,
@@ -148,6 +152,7 @@ export class GameScene extends Phaser.Scene {
           left: false,
           right: false,
           jumpPressed: false,
+          downPressed: false,
           attackHeld: false,
           attackByPointer: false,
           dashPressed: false,
@@ -203,6 +208,7 @@ export class GameScene extends Phaser.Scene {
       !this.player?.isDead() &&
       !this.gameOverUi?.isActive();
     this.touchControls?.setVisible(show);
+    this.setGameplayCursor(show);
   }
 
   private readIntent(): MovementIntent & { attackByTouch: boolean } {
@@ -212,6 +218,7 @@ export class GameScene extends Phaser.Scene {
       left: !!(touch?.left || keyboard?.left),
       right: !!(touch?.right || keyboard?.right),
       jumpPressed: !!(touch?.jumpPressed || keyboard?.jumpPressed),
+      downPressed: !!(touch?.downPressed || keyboard?.downPressed),
       attackHeld: !!(touch?.attackHeld || keyboard?.attackHeld),
       // Pointer-driven aim applies only to real mouse/pointer attack, never to virtual touch buttons.
       attackByPointer: !!keyboard?.attackByPointer,
@@ -324,6 +331,15 @@ export class GameScene extends Phaser.Scene {
 
   public onResumedFromPause(): void {
     // Wave/banner timing is delta-driven in GameScene.update; it resumes naturally after pause.
+    this.setGameplayCursor(true);
+  }
+
+  private setGameplayCursor(gameplay: boolean): void {
+    try {
+      this.input.setDefaultCursor(gameplay ? 'none' : 'default');
+    } catch {
+      // Ignore cursor API differences; never block gameplay/UI.
+    }
   }
 
   private openUpgradeSelection(): void {
@@ -337,9 +353,18 @@ export class GameScene extends Phaser.Scene {
       this.waveController?.beginIntermission();
       return;
     }
-    this.upgradeSelectionActive = true;
-    const upgrades = pickRandomUpgrades(3);
-    this.upgradeUi.show(upgrades);
+    // Fast transition to upgrade selection after wave clear (no extra empty pause).
+    this.time.delayedCall(120, () => {
+      if (!this.upgradeUi || !this.waveController || !this.player || this.runOver) return;
+      if (this.player.isDead() || this.upgradeSelectionActive) return;
+      if (this.scene.isPaused()) return;
+      const pauseScene = this.scene.get('PauseScene');
+      if (pauseScene?.scene?.isActive()) return;
+      this.upgradeSelectionActive = true;
+      this.setGameplayCursor(false);
+      const upgrades = pickRandomUpgrades(3);
+      this.upgradeUi.show(upgrades);
+    });
   }
 
   private onUpgradeSelected(upgrade: UpgradeDefinition): void {
@@ -350,7 +375,7 @@ export class GameScene extends Phaser.Scene {
     this.upgradesCollected += 1;
     this.upgradeUi?.hide();
     this.upgradeSelectionActive = false;
-    this.waveController.beginIntermission(2000);
+    this.waveController.beginIntermission(650);
   }
 
   private triggerGameOver(): void {
@@ -358,6 +383,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.runOver = true;
+    this.setGameplayCursor(false);
     AudioManager.update(0, { runOver: true, bossActive: false, upgradeActive: false });
     this.upgradeSelectionActive = false;
     this.upgradeUi?.hide();
@@ -398,6 +424,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.touchControls?.releaseAll();
+    this.setGameplayCursor(false);
     this.scene.launch('PauseScene');
     this.scene.pause();
   }
@@ -455,19 +482,59 @@ export class GameScene extends Phaser.Scene {
 
     const playerHitbox = player.getAttackHitbox();
     const playerBody = player.getBodyObject().body as Phaser.Physics.Arcade.Body;
+    const slamImpact = player.consumeGroundSlamImpact();
     for (const enemy of waveController.getEnemies()) {
       if (enemy.isDead()) {
         continue;
       }
+      const enemyBody = enemy.getBodyObject().body as Phaser.Physics.Arcade.Body;
+      const enemyRect = enemyBody.enable ? this.toBodyRect(enemyBody) : null;
+      if (slamImpact && enemyRect && !player.hasGroundSlamHitTarget(enemy)) {
+        const ecx = enemyRect.x + enemyRect.width / 2;
+        const ecy = enemyRect.y + enemyRect.height / 2;
+        const dx = ecx - slamImpact.x;
+        const dy = ecy - slamImpact.bottomY;
+        if (dx * dx + dy * dy <= slamImpact.radius * slamImpact.radius) {
+          const blocked =
+            !!this.arena &&
+            isGroundSlamBlockedByPlatforms(
+              slamImpact.x,
+              slamImpact.bottomY,
+              ecx,
+              ecy,
+              enemyRect.width / 2,
+              enemyRect.height / 2,
+              this.arena.getPlatformBounds(),
+            );
+          if (!blocked) {
+            player.markGroundSlamHitTarget(enemy);
+            if (enemy.takeDamage(slamImpact.damage)) {
+              enemy.applyGroundSlamKnockback(
+                slamImpact.x,
+                slamImpact.bottomY,
+                PLAYER_BALANCE.groundSlamKnockbackHorizontal,
+                PLAYER_BALANCE.groundSlamKnockbackVertical,
+                PLAYER_BALANCE.groundSlamKnockbackDurationMs,
+                PLAYER_BALANCE.groundSlamKnockbackMaxSpeed,
+              );
+            }
+          }
+        }
+      }
 
-      if (playerHitbox && !player.hasHitTarget(enemy)) {
-        const enemyBody = enemy.getBodyObject().body as Phaser.Physics.Arcade.Body;
+      if (playerHitbox && enemyRect && !player.hasHitTarget(enemy)) {
         if (
-          enemyBody.enable &&
-          Phaser.Geom.Intersects.RectangleToRectangle(playerHitbox, this.toBodyRect(enemyBody)) &&
+          Phaser.Geom.Intersects.RectangleToRectangle(playerHitbox, enemyRect) &&
           enemy.takeDamage(player.getAttackDamage())
         ) {
           player.markHitTarget(enemy);
+          const hit = this.impactPoint(playerHitbox, enemyRect);
+          enemy.emitHitImpact(
+            hit.x,
+            hit.y,
+            enemyRect.x + enemyRect.width / 2 - playerBody.center.x,
+            enemyRect.y + enemyRect.height / 2 - playerBody.center.y,
+          );
           enemy.applyKnockback(playerBody.x + playerBody.width / 2);
         }
       }
@@ -484,6 +551,14 @@ export class GameScene extends Phaser.Scene {
           player.takeDamage(enemy.getAttackDamage())
         ) {
           enemy.markHitTarget(player);
+          const playerRect = this.toBodyRect(playerBody);
+          const hit = this.impactPoint(enemyHitbox, playerRect);
+          player.emitHitImpact(
+            hit.x,
+            hit.y,
+            playerRect.x + playerRect.width / 2 - (enemyRect?.x ?? hit.x),
+            playerRect.y + playerRect.height / 2 - (enemyRect?.y ?? hit.y),
+          );
         }
       }
     }
@@ -502,6 +577,13 @@ export class GameScene extends Phaser.Scene {
         )
       ) {
         projectile.markHit();
+        const b = projectile.getBounds();
+        player.emitHitImpact(
+          b.x + b.width / 2,
+          b.y + b.height / 2,
+          playerBody.center.x - (b.x + b.width / 2),
+          playerBody.center.y - (b.y + b.height / 2),
+        );
         player.takeDamage(projectile.damage);
         if (player.isDead()) {
           break;
@@ -520,6 +602,13 @@ export class GameScene extends Phaser.Scene {
         )
       ) {
         shockwave.markHit();
+        const b = shockwave.getBounds();
+        player.emitHitImpact(
+          b.x + b.width / 2,
+          b.y + b.height / 2,
+          playerBody.center.x - (b.x + b.width / 2),
+          playerBody.center.y - (b.y + b.height / 2),
+        );
         player.takeDamage(shockwave.damage);
         if (player.isDead()) {
           break;
@@ -530,5 +619,14 @@ export class GameScene extends Phaser.Scene {
 
   private toBodyRect(body: Phaser.Physics.Arcade.Body): Phaser.Geom.Rectangle {
     return new Phaser.Geom.Rectangle(body.x, body.y, body.width, body.height);
+  }
+
+  private impactPoint(
+    a: Phaser.Geom.Rectangle,
+    b: Phaser.Geom.Rectangle,
+  ): { x: number; y: number } {
+    const x = Phaser.Math.Clamp((a.x + a.width / 2 + b.x + b.width / 2) / 2, b.x, b.x + b.width);
+    const y = Phaser.Math.Clamp((a.y + a.height / 2 + b.y + b.height / 2) / 2, b.y, b.y + b.height);
+    return { x, y };
   }
 }

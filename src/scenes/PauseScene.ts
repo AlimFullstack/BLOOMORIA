@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { AudioManager } from '../audio/AudioManager';
-import { t } from '../i18n/i18n';
+import { t, type TranslationKey } from '../i18n/i18n';
+import { KEYBINDINGS } from '../input/KeyboardInput';
 import {
   applyGameSettings,
   getGameSettings,
@@ -206,20 +207,23 @@ export class PauseScene extends Phaser.Scene {
     this.settingsBackText?.setText(t('settings.back'));
     this.controlsBackText?.setText(t('controls.back'));
     this.audioNoteText?.setText(t('settings.audioNote'));
-    const controlKeys = [
-      t('controls.move'),
-      t('controls.jump'),
-      t('controls.attack'),
-      t('controls.pause'),
-    ];
-    this.controlLines.forEach((line, i) => line.setText(controlKeys[i] ?? ''));
+    this.controlLines.forEach((line, i) => {
+      const kb = KEYBINDINGS[i];
+      if (!kb) return;
+      line.setText(t(kb.key as TranslationKey, { key: kb.binding }));
+    });
   }
 
   private drawPanel(view: PauseView): void {
     const w = this.scale.width;
     const h = this.scale.height;
     const pw = view === 'menu' ? 420 : view === 'settings' ? 620 : 720;
-    const ph = view === 'menu' ? 360 : view === 'settings' ? 470 : 300;
+    const ph =
+      view === 'menu'
+        ? 360
+        : view === 'settings'
+          ? 470
+          : Math.max(320, 150 + KEYBINDINGS.length * 28 + 70);
     const x = (w - pw) / 2;
     const y = (h - ph) / 2 + 10;
     this.panelGfx.clear();
@@ -465,18 +469,20 @@ export class PauseScene extends Phaser.Scene {
 
   private buildControls(): void {
     const w = this.scale.width;
-    this.controlLines = [0, 1, 2, 3].map((i) =>
+    this.controlLines = KEYBINDINGS.map((_, i) =>
       this.add
-        .text(w / 2, 228 + i * 34, '', {
+        .text(w / 2, 200 + i * 28, '', {
           fontFamily: 'monospace',
-          fontSize: '17px',
+          fontSize: '16px',
           color: COLORS.text,
           align: 'center',
           wordWrap: { width: 680 },
         })
         .setOrigin(0.5),
     );
-    const back = this.createSimpleButton(w / 2, 430, 180, 42, () => this.setView('menu'));
+    const back = this.createSimpleButton(w / 2, 200 + KEYBINDINGS.length * 28 + 18, 180, 42, () =>
+      this.setView('menu'),
+    );
     this.controlsBackText = back.text;
     this.controlsContainer.add([...this.controlLines, back.container]);
   }

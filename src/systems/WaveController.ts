@@ -126,7 +126,7 @@ export class WaveController {
     return false;
   }
 
-  public beginIntermission(delayMs = 2000): void {
+  public beginIntermission(delayMs = 650): void {
     if (!this.waveClearedPending) {
       return;
     }
@@ -431,18 +431,27 @@ export class WaveController {
   }
 
   private updateProjectiles(delta: number): void {
+    const arenaW = this.scene.scale.width;
+    const arenaH = this.scene.scale.height;
     for (let i = this.projectiles.length - 1; i >= 0; i -= 1) {
       const projectile = this.projectiles[i];
       projectile.update(delta);
       if (
         !projectile.isActive() ||
         projectile.hasHit() ||
-        this.projectileHitsPlatform(projectile)
+        this.projectileHitsPlatform(projectile) ||
+        this.projectileOutsideArena(projectile, arenaW, arenaH)
       ) {
         projectile.destroy();
         this.projectiles.splice(i, 1);
       }
     }
+  }
+
+  private projectileOutsideArena(projectile: Projectile, arenaW: number, arenaH: number): boolean {
+    // Remove only after projectile has fully left arena bounds (size-aware).
+    const b = projectile.getBounds();
+    return b.right < 0 || b.left > arenaW || b.bottom < 0 || b.top > arenaH;
   }
 
   private projectileHitsPlatform(projectile: Projectile): boolean {

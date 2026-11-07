@@ -6,7 +6,6 @@ export class Projectile {
   private readonly graphics: Phaser.GameObjects.Graphics;
   private x: number;
   private y: number;
-  private lifeMs: number;
   private active = true;
   private hit = false;
 
@@ -16,14 +15,13 @@ export class Projectile {
     y: number,
     private readonly vx: number,
     private readonly vy: number,
-    lifetimeMs: number,
+    _lifetimeMs: number,
     private readonly size: number,
     private readonly color: string,
     public readonly damage: number,
   ) {
     this.x = x;
     this.y = y;
-    this.lifeMs = lifetimeMs;
     this.graphics = scene.add.graphics();
     this.graphics.setDepth(11);
     this.render();
@@ -36,11 +34,7 @@ export class Projectile {
     const dt = delta / 1000;
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    this.lifeMs -= delta;
-    if (this.lifeMs <= 0) {
-      this.active = false;
-      return;
-    }
+    // Phase 11.13: no timer/range expiry inside arena; removal handled by hit/collision/out-of-arena checks.
     this.render();
   }
 

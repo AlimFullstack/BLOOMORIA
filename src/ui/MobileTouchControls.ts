@@ -4,6 +4,7 @@ export interface TouchIntent {
   left: boolean;
   right: boolean;
   jumpPressed: boolean;
+  downPressed: boolean;
   attackHeld: boolean;
   dashPressed: boolean;
   /** True when attack is coming from the mobile Attack button (not mouse/keyboard pointer). */
@@ -143,7 +144,7 @@ function isTouchDevice(scene: Phaser.Scene): boolean {
 }
 
 class ActionButton {
-  public readonly id: 'attack' | 'dash' | 'fullscreen';
+  public readonly id: 'attack' | 'dash' | 'slam' | 'fullscreen';
   public readonly hit: Phaser.GameObjects.Rectangle;
   private readonly bg: Phaser.GameObjects.Rectangle;
   private readonly icon: Phaser.GameObjects.Graphics;
@@ -162,7 +163,7 @@ class ActionButton {
     scene: Phaser.Scene,
     parent: Phaser.GameObjects.Container,
     cfg: {
-      id: 'attack' | 'dash' | 'fullscreen';
+      id: 'attack' | 'dash' | 'slam' | 'fullscreen';
       label: string;
       x: number;
       y: number;
@@ -348,6 +349,11 @@ class ActionButton {
         g.fillTriangle(s * 0.8, 0, -s * 0.2, -s * 0.75, -s * 0.2, s * 0.75);
         g.fillRect(-s * 0.9, -s * 0.35, s * 0.55, s * 0.7);
         break;
+      case 'slam':
+        g.lineBetween(0, -s * 0.85, 0, s * 0.25);
+        g.fillTriangle(0, s * 0.95, -s * 0.45, s * 0.2, s * 0.45, s * 0.2);
+        g.lineBetween(-s * 0.7, -s * 0.15, s * 0.7, -s * 0.15);
+        break;
       default:
         break;
     }
@@ -359,6 +365,7 @@ class MovementJoystick {
   private readonly base: Phaser.GameObjects.Arc;
   private readonly knob: Phaser.GameObjects.Arc;
   private readonly hit: Phaser.GameObjects.Arc;
+  private readonly onScenePointerMove: (p: Phaser.Input.Pointer) => void;
   private pointerId: number | null = null;
   private vecX = 0;
   private vecY = 0;
@@ -373,7 +380,6 @@ class MovementJoystick {
     private readonly radius: number,
     knobRadius: number,
   ) {
-    void knobRadius;
     this.container = scene.add.container(0, 0);
     this.base = scene.add.circle(0, 0, radius, toHex(COLORS.joyBase), 0.38);
     this.base.setStrokeStyle(2, toHex(COLORS.joyBaseStroke), 0.78);
@@ -383,15 +389,15 @@ class MovementJoystick {
     this.hit = scene.add.circle(0, 0, radius * 1.15, 0xffffff, 0.001);
     this.hit.setInteractive({ draggable: false, useHandCursor: false });
     this.hit.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p));
-    // Do NOT release on pointerout/pointerupoutside: dragging the thumb moves outside the hit circle
-    // and would falsely cancel the joystick (~0.5s/drag issue on mobile). Release is handled by
-    // pointerup/pointercancel + scene/global safety handlers in MobileTouchControls.
+    // CRITICAL: never release on pointerout/pointerupoutside. Dragging outside the visual/interactive
+    // joystick must keep the same captured pointerId active; release only on real up/cancel/loss handlers.
     this.hit.on('pointerup', (p: Phaser.Input.Pointer) => this.onUp(p));
     this.hit.on('pointercancel', (p: Phaser.Input.Pointer) => this.onUp(p));
     this.container.add([this.base, this.knob, this.hit]);
     parent.add(this.container);
 
-    scene.input.on('pointermove', (p: Phaser.Input.Pointer) => this.onMove(p));
+    this.onScenePointerMove = (p: Phaser.Input.Pointer) => this.onMove(p);
+    scene.input.on('pointermove', this.onScenePointerMove);
   }
 
   public setPosition(x: number, y: number): void {
@@ -429,7 +435,7 @@ class MovementJoystick {
   }
 
   public destroy(scene: Phaser.Scene): void {
-    scene.input.off('pointermove');
+    scene.input.off('pointermove', this.onScenePointerMove);
   }
 
   private onDown(pointer: Phaser.Input.Pointer): void {
@@ -449,7 +455,7 @@ class MovementJoystick {
   }
 
   private updateFromPointer(pointer: Phaser.Input.Pointer): void {
-    // Use screen/camera-space delta via worldX/worldY (scene uses fixed camera/scroll); works while held.
+    // Track the activating pointer anywhere (including far outside the visual joystick/canvas deltas).
     const dx = pointer.worldX - this.centerX;
     const dy = pointer.worldY - this.centerY;
     const dist = Math.hypot(dx, dy);
@@ -510,6 +516,7 @@ export class MobileTouchControls {
     providers: {
       attackCooldown: AbilityCooldownProvider;
       dashCooldown: AbilityCooldownProvider;
+      groundSlamCooldown?: AbilityCooldownProvider;
     },
   ) {
     this.enabled = isTouchDevice(scene);
@@ -521,8 +528,8 @@ export class MobileTouchControls {
 
     this.fullscreenAvailable = this.enabled && this.detectFullscreenApi();
     if (this.enabled) {
-      // Left: joystick (replaces 3 buttons). Up = jump.
-      this.joystick = new MovementJoystick(scene, this.root, 72, 30);
+      // Left: joystick (replaces 3 buttons). Up = jump. 3x size (base 72->216, knob 30->90).
+      this.joystick = new MovementJoystick(scene, this.root, 216, 90);
       this.buildButtons(providers);
       this.layout();
       this.updateFullscreenButtonState();
@@ -583,6 +590,7 @@ export class MobileTouchControls {
         left: false,
         right: false,
         jumpPressed: false,
+        downPressed: false,
         attackHeld: false,
         dashPressed: false,
         attackByTouch: false,
@@ -598,6 +606,7 @@ export class MobileTouchControls {
       left: move.left,
       right: move.right,
       jumpPressed: move.jumpPressed,
+      downPressed: this.buttonById.get('slam')?.consumeEdge() ?? false,
       attackHeld,
       dashPressed: this.buttonById.get('dash')?.consumeEdge() ?? false,
       attackByTouch: attackHeld, // mobile Attack button -> auto-aim nearest enemy (#2)
@@ -749,10 +758,11 @@ export class MobileTouchControls {
   private buildButtons(providers: {
     attackCooldown: AbilityCooldownProvider;
     dashCooldown: AbilityCooldownProvider;
+    groundSlamCooldown?: AbilityCooldownProvider;
   }): void {
-    // Right side: larger Attack + Dash (replaces previous layout); left side uses joystick.
+    // Right side: Attack + Dash + Ground Slam (edge, air-only in Player). Left side uses joystick.
     const cfgs: Array<{
-      id: 'attack' | 'dash' | 'fullscreen';
+      id: 'attack' | 'dash' | 'slam' | 'fullscreen';
       label: string;
       w: number;
       h: number;
@@ -769,6 +779,14 @@ export class MobileTouchControls {
         provider: providers.attackCooldown,
       },
       { id: 'dash', label: 'DASH', w: 118, h: 118, hold: false, provider: providers.dashCooldown },
+      {
+        id: 'slam',
+        label: 'DOWN',
+        w: 96,
+        h: 96,
+        hold: false,
+        provider: providers.groundSlamCooldown ?? null,
+      },
     ];
     if (this.fullscreenAvailable) {
       cfgs.push({
@@ -810,26 +828,33 @@ export class MobileTouchControls {
     const margin = 14;
     const gap = 12;
 
-    // Left: joystick (up = jump). Larger, safe-area aware.
+    // Left: joystick (up = jump). 3x larger, safe-area aware; stays tracked when finger leaves area.
     if (this.joystick) {
-      const joyR = 72;
+      const joyR = 216;
       const joyX = margin + inset.left + joyR + 10;
       const joyY = h - margin - inset.bottom - joyR - 8;
       this.joystick.setPosition(joyX, joyY);
     }
 
-    // Right cluster bottom-right: [Dash] [Attack] (larger hit areas).
+    // Right cluster bottom-right: [Slam] [Dash] [Attack] (larger hit areas).
     const attackBtn = this.buttonById.get('attack');
     const dashBtn = this.buttonById.get('dash');
+    const slamBtn = this.buttonById.get('slam');
     if (attackBtn && dashBtn) {
       const aw = 132;
       const ah = 132;
       const dw = 118;
       const dh = 118;
+      const sw = 96;
+      const sh = 96;
       const baseY = h - margin - inset.bottom - ah / 2;
       const attackX = w - margin - inset.right - aw / 2;
       attackBtn.setPosition(attackX, baseY);
-      dashBtn.setPosition(attackX - aw / 2 - gap - dw / 2, baseY - (ah - dh) / 2);
+      const dashX = attackX - aw / 2 - gap - dw / 2;
+      dashBtn.setPosition(dashX, baseY - (ah - dh) / 2);
+      if (slamBtn) {
+        slamBtn.setPosition(dashX - dw / 2 - gap - sw / 2, baseY - (ah - sh) / 2);
+      }
     }
 
     // Small fullscreen toggle (mobile-only, when API available) top-right, left of PauseButton.

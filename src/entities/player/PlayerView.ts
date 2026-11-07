@@ -146,6 +146,14 @@ export class PlayerView {
     this.fx.emitDashBurst(x, bottomY, facing, COLORS.dash, onGround);
   }
 
+  public emitGroundSlam(x: number, bottomY: number): void {
+    this.fx.emitGroundSlam(x, bottomY, '#C62828', '#FF5A3A');
+  }
+
+  public emitHitImpact(x: number, y: number, dirX: number, dirY: number): void {
+    this.fx.emitHitImpact(x, y, COLORS.death, COLORS.swingSpark, dirX, dirY);
+  }
+
   public hide(): void {
     this.graphics.clear();
   }
@@ -220,21 +228,11 @@ export class PlayerView {
     }
 
     if (attack && this.swingDustMs <= 0) {
-      const dirX = attack.directionX || this.facing;
-      const dirY = attack.directionY || 0;
-      const angle = Math.atan2(dirY, dirX);
-      const swing = Phaser.Math.Linear(-0.85, 0.95, Phaser.Math.Clamp(attack.progress, 0, 1));
-      const pivotX = x + dirX * (PLAYER_BALANCE.width * 0.26) + this.offsetX;
-      const pivotY = this.getMetrics(x, bottomY - PLAYER_BALANCE.height / 2).centerY + 4;
-      this.fx.emitSwordSwing(
-        pivotX,
-        pivotY,
-        angle + swing,
-        attack.progress,
-        this.facing,
-        COLORS.swingSpark,
-      );
-      this.swingDustMs = 30;
+      // Phase 11.12: player attack VFX is enemy-style arc/slash drawn in render (no particle burst).
+      void attack;
+      this.swingDustMs = Number.MAX_SAFE_INTEGER;
+    } else if (!attack) {
+      this.swingDustMs = 0;
     }
 
     this.fx.update(deltaMs);
@@ -387,42 +385,45 @@ export class PlayerView {
   }
 
   private drawAttack(centerX: number, centerY: number, attack: AttackVisual): void {
+    // Phase 11.12: enemy-style arc/slash VFX aligned to facing/attack trajectory (visual only, no hitbox impact).
     const p = Phaser.Math.Clamp(attack.progress, 0, 1);
     const dirX = attack.directionX || this.facing;
     const dirY = attack.directionY || 0;
     const angle = Math.atan2(dirY, dirX);
-    const swing = Phaser.Math.Linear(-0.85, 0.95, p);
-    const pivotX = centerX + dirX * (PLAYER_BALANCE.width * 0.26);
-    const pivotY = centerY + 4;
-
-    const baseAngle = angle + swing;
-    const handleLen = 12;
-    const bladeLen = Math.max(20, attack.range - handleLen + 2);
-    const h1x = pivotX + Math.cos(baseAngle) * handleLen;
-    const h1y = pivotY + Math.sin(baseAngle) * handleLen;
-    const tipX = pivotX + Math.cos(baseAngle) * (handleLen + bladeLen);
-    const tipY = pivotY + Math.sin(baseAngle) * (handleLen + bladeLen);
-    const side = Math.PI / 2;
-    const bladeW = 5;
-
-    this.graphics.lineStyle(4, toHex(COLORS.swordHandle), 1);
-    this.graphics.lineBetween(pivotX, pivotY, h1x, h1y);
-
-    this.graphics.fillStyle(toHex(COLORS.swordBlade), 1);
-    this.graphics.lineStyle(2, toHex(COLORS.swordEdge), 1);
+    const reach = Math.max(16, attack.range);
+    const anchorX = centerX + dirX * (PLAYER_BALANCE.width * 0.34);
+    const anchorY = centerY - PLAYER_BALANCE.height * 0.06 + dirY * 8;
+    const sweepStart = angle - 1.05;
+    const sweepEnd = angle + 0.78;
+    const eased = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+    const a = Phaser.Math.Linear(sweepStart, sweepEnd, eased);
+    const tipX = anchorX + Math.cos(a) * reach;
+    const tipY = anchorY + Math.sin(a) * reach;
+    this.graphics.lineStyle(4, toHex(COLORS.swingSpark), 0.24 * (1 - p * 0.35));
     this.graphics.beginPath();
-    this.graphics.moveTo(
-      h1x + Math.cos(baseAngle + side) * bladeW,
-      h1y + Math.sin(baseAngle + side) * bladeW,
+    this.graphics.arc(
+      anchorX,
+      anchorY,
+      reach * 0.92,
+      Math.min(sweepStart, a),
+      Math.max(sweepStart, a),
+      false,
     );
-    this.graphics.lineTo(tipX, tipY);
-    this.graphics.lineTo(
-      h1x + Math.cos(baseAngle - side) * bladeW,
-      h1y + Math.sin(baseAngle - side) * bladeW,
-    );
-    this.graphics.closePath();
-    this.graphics.fillPath();
     this.graphics.strokePath();
+    // Phase 11.14: visually wider/thicker blade; length/reach/anchor/pivot/trajectory/hitbox unchanged.
+    this.graphics.lineStyle(8, toHex(COLORS.swordBlade), 0.98);
+    this.graphics.beginPath();
+    this.graphics.moveTo(anchorX, anchorY);
+    this.graphics.lineTo(tipX, tipY);
+    this.graphics.strokePath();
+    this.graphics.lineStyle(3, toHex(COLORS.swordEdge), 0.72);
+    this.graphics.beginPath();
+    this.graphics.moveTo(anchorX, anchorY);
+    this.graphics.lineTo(tipX, tipY);
+    this.graphics.strokePath();
+    this.graphics.fillStyle(toHex(COLORS.swordEdge), 0.95);
+    this.graphics.fillCircle(anchorX, anchorY, 3.2);
+    this.graphics.fillCircle(tipX, tipY, 3.4);
   }
 
   private drawEyes(centerX: number, centerY: number, width: number, height: number): void {

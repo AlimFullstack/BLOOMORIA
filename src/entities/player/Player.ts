@@ -41,6 +41,7 @@ export class Player {
   private readonly dashSpeed: number = PLAYER_BALANCE.dashSpeed;
   private readonly dashDurationMs: number = PLAYER_BALANCE.dashDurationMs;
   private readonly dashCooldownMs: number = PLAYER_BALANCE.dashCooldownMs;
+  private readonly groundSlamCooldownMs: number = PLAYER_BALANCE.groundSlamCooldownMs;
   private dead = false;
   private deathBurstStarted = false;
   private deathEffectFinished = false;
@@ -49,11 +50,15 @@ export class Player {
   private attackRemainingMs = 0;
   private dashRemainingMs = 0;
   private dashCooldownRemainingMs = 0;
+  private groundSlamCooldownRemainingMs = 0;
   private dashDirection: FacingDirection = 1;
   private dashTrailMs = 0;
   private attackDirectionX = 1;
   private attackDirectionY = 0;
   private attackTargets = new Set<object>();
+  private groundSlamPending = false;
+  private groundSlamImpact: { x: number; bottomY: number; damage: number } | null = null;
+  private groundSlamHitTargets = new Set<object>();
   private wasOnGround = false;
   private footstepMs = 0;
   private damageFlashPending = false;
@@ -108,10 +113,37 @@ export class Player {
     };
   }
 
+  public getGroundSlamCooldownState(): { remainingMs: number; durationMs: number } {
+    return {
+      remainingMs: Math.max(0, this.groundSlamCooldownRemainingMs),
+      durationMs: Math.max(1, this.groundSlamCooldownMs),
+    };
+  }
+
   public consumeDamageFlash(): boolean {
     if (!this.damageFlashPending) return false;
     this.damageFlashPending = false;
     return true;
+  }
+
+  public consumeGroundSlamImpact(): {
+    x: number;
+    bottomY: number;
+    damage: number;
+    radius: number;
+  } | null {
+    if (!this.groundSlamImpact) return null;
+    const impact = this.groundSlamImpact;
+    this.groundSlamImpact = null;
+    return { ...impact, radius: PLAYER_BALANCE.groundSlamRadius };
+  }
+
+  public hasGroundSlamHitTarget(target: object): boolean {
+    return this.groundSlamHitTargets.has(target);
+  }
+
+  public markGroundSlamHitTarget(target: object): void {
+    this.groundSlamHitTargets.add(target);
   }
 
   public isDead(): boolean {
@@ -227,6 +259,9 @@ export class Player {
     }
 
     this.tickTimers(delta);
+    if (intent.downPressed) {
+      this.tryGroundSlam();
+    }
 
     const horizontal = (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
     if (intent.dashPressed) {
@@ -253,14 +288,27 @@ export class Player {
     }
 
     const onGround = this.body.blocked.down || this.body.touching.down;
+    if (this.groundSlamPending && !onGround) {
+      this.body.setVelocityY(Math.max(this.body.velocity.y, PLAYER_BALANCE.groundSlamDownVelocity));
+    }
     if (onGround && !this.wasOnGround) {
       AudioManager.playerLand();
+      if (this.groundSlamPending) {
+        this.groundSlamPending = false;
+        this.groundSlamHitTargets.clear();
+        this.groundSlamImpact = {
+          x: this.bodyObject.x,
+          bottomY: this.body.bottom,
+          damage: this.attackDamage,
+        };
+        this.view.emitGroundSlam(this.bodyObject.x, this.body.bottom);
+      }
     }
-    if (!this.isDashing() && intent.jumpPressed && onGround) {
+    if (!this.isDashing() && !this.groundSlamPending && intent.jumpPressed && onGround) {
       this.body.setVelocityY(-this.jumpSpeed);
       AudioManager.playerJump();
     }
-    if (!this.isDashing() && onGround && horizontal !== 0) {
+    if (!this.isDashing() && !this.groundSlamPending && onGround && horizontal !== 0) {
       this.footstepMs -= delta;
       if (this.footstepMs <= 0) {
         AudioManager.playerFootstep();
@@ -277,6 +325,19 @@ export class Player {
 
     this.state = this.resolveState(this.isDashing() ? this.dashDirection : horizontal, onGround);
     this.render(delta, lookTarget);
+  }
+
+  public applyKnockback(fromX: number, _fromY: number, horizontal: number, vertical: number): void {
+    if (this.dead || this.isDashing()) return;
+    const dx = this.bodyObject.x - fromX;
+    const dirX = Math.abs(dx) > 0.001 ? Math.sign(dx) : 1;
+    const h = Phaser.Math.Clamp(horizontal, 0, 900);
+    const v = Phaser.Math.Clamp(vertical, 0, 700);
+    if (h <= 0 && v <= 0) return;
+    this.body.setVelocityX(dirX * h);
+    if (v > 0) {
+      this.body.setVelocityY(Math.min(this.body.velocity.y, -v));
+    }
   }
 
   public takeDamage(amount: number): boolean {
@@ -297,6 +358,10 @@ export class Player {
       this.die();
     }
     return true;
+  }
+
+  public emitHitImpact(x: number, y: number, dirX: number, dirY: number): void {
+    this.view.emitHitImpact(x, y, dirX, dirY);
   }
 
   public destroy(): void {
@@ -324,6 +389,28 @@ export class Player {
     AudioManager.playerDash();
   }
 
+  private tryGroundSlam(): void {
+    if (this.dead || this.groundSlamPending || this.groundSlamImpact) {
+      return;
+    }
+    if (this.groundSlamCooldownRemainingMs > 0) {
+      return;
+    }
+    if (this.isDashing() || this.isInvulnerable()) {
+      return;
+    }
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    if (onGround) {
+      return;
+    }
+    // Air-only activation: fast downward drop; impact triggers only on actual surface contact.
+    this.groundSlamPending = true;
+    this.groundSlamHitTargets.clear();
+    // Cooldown starts on actual activation attempt (no hold abuse; keydown edge in input).
+    this.groundSlamCooldownRemainingMs = this.groundSlamCooldownMs;
+    this.body.setVelocityY(PLAYER_BALANCE.groundSlamDownVelocity);
+  }
+
   private tryAttack(
     byPointer: boolean,
     lookTarget: LookTarget,
@@ -333,26 +420,13 @@ export class Player {
       return;
     }
 
-    // Mouse pointer attack (PC) aims at cursor. Mobile/keyboard may provide nearest-enemy aimTarget.
-    const target = byPointer && lookTarget ? lookTarget : aimTarget;
-    if (target) {
-      const dx = target.x - this.bodyObject.x;
-      const dy = target.y - this.bodyObject.y;
-      const len = Math.hypot(dx, dy);
-      if (len > 0.001) {
-        this.attackDirectionX = dx / len;
-        this.attackDirectionY = dy / len;
-        if (Math.abs(this.attackDirectionX) > 0.01) {
-          this.facing = this.attackDirectionX > 0 ? 1 : -1;
-        }
-      } else {
-        this.attackDirectionX = this.facing;
-        this.attackDirectionY = 0;
-      }
-    } else {
-      this.attackDirectionX = this.facing;
-      this.attackDirectionY = 0;
-    }
+    // Phase 11.12: attack direction is character facing only (not cursor).
+    // Mouse/touch nearest-enemy aim may still trigger attack, but never overrides facing.
+    void byPointer;
+    void lookTarget;
+    void aimTarget;
+    this.attackDirectionX = this.facing;
+    this.attackDirectionY = 0;
 
     this.attackTargets.clear();
     this.attackRemainingMs = this.attackDurationMs;
@@ -364,6 +438,7 @@ export class Player {
     this.invulnerabilityRemainingMs = Math.max(0, this.invulnerabilityRemainingMs - delta);
     this.attackCooldownRemainingMs = Math.max(0, this.attackCooldownRemainingMs - delta);
     this.dashCooldownRemainingMs = Math.max(0, this.dashCooldownRemainingMs - delta);
+    this.groundSlamCooldownRemainingMs = Math.max(0, this.groundSlamCooldownRemainingMs - delta);
     if (this.dashRemainingMs > 0) {
       this.dashRemainingMs = Math.max(0, this.dashRemainingMs - delta);
     }
@@ -418,6 +493,9 @@ export class Player {
       return;
     }
     this.dead = true;
+    this.groundSlamPending = false;
+    this.groundSlamImpact = null;
+    this.groundSlamHitTargets.clear();
     this.dashRemainingMs = 0;
     this.dashCooldownRemainingMs = 0;
     this.attackRemainingMs = 0;
