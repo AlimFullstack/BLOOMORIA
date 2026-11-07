@@ -114,13 +114,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleScaleResize(): void {
-    // Display/canvas resized (fullscreen/rotation/window). Arena/camera/physics bounds stay at APP_CONFIG.
-    // Touch controls re-layout internally; this ensures Phaser scale state stays consistent.
-    try {
-      this.scale.refresh();
-    } catch {
-      // ignore
-    }
+    // Display/canvas resized (fullscreen/rotation/window). Logical world/camera/physics stay at APP_CONFIG.
+    // IMPORTANT: never call scale.refresh() here — Phaser emits resize from refresh/resize handling;
+    // re-entering refresh from the resize handler can create resize storms and long main-thread stalls.
+    // UI systems that need relayout listen to scale resize or handle it explicitly/coalesced.
   }
 
   private onVisibilityOrBlur = (): void => {

@@ -112,6 +112,21 @@ function safeScaleRefresh(scene: Phaser.Scene): void {
   }
 }
 
+function perfNow(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+function logPerf(label: string, startedAt: number): void {
+  try {
+    const ms = Math.round((perfNow() - startedAt) * 100) / 100;
+    console.info(`[BLOOMORIA][perf] ${label} ${ms}ms`);
+  } catch {
+    // never block gameplay
+  }
+}
+
 function isTouchDevice(scene: Phaser.Scene): boolean {
   const touchCapable = !!scene.sys.game.device.input.touch;
   const maxPoints =
@@ -497,6 +512,9 @@ export class MobileTouchControls {
   private readonly onFullscreenError: () => void;
   private readonly onScenePointerUp: (p: Phaser.Input.Pointer) => void;
   private readonly onGameOut: () => void;
+  private fullscreenTransitionPending = false;
+  private resizeLayoutRaf = 0;
+  private resizeLayoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -522,28 +540,47 @@ export class MobileTouchControls {
       this.updateFullscreenButtonState();
     }
 
-    this.onResize = () => this.layout();
+    this.onResize = () => this.scheduleLayout();
     this.onBlur = () => this.releaseAll();
     this.onVisibility = () => {
       if (typeof document !== 'undefined' && document.hidden) this.releaseAll();
     };
     this.onGlobalUp = (e: Event) => {
-      // Robust release for stuck touches/pointers (fixes intermittent non-responsive controls).
+      // Safety release for lost pointers. CRITICAL: release ONLY the specific pointer when known.
+      // Never releaseAll() on generic touch/pointer end events — doing so resets joystick when
+      // another finger (e.g. Attack) is released (root cause of movement interruption).
       const pe = e as PointerEvent & { pointerId?: number };
-      if (typeof pe.pointerId === 'number') this.releasePointer(pe.pointerId);
-      else this.releaseAll();
+      if (typeof pe.pointerId === 'number' && Number.isFinite(pe.pointerId)) {
+        // PointerEvent pointerId 0 can appear in some non-pointer paths; still safe to target.
+        if (pe.pointerId >= 0) this.releasePointer(pe.pointerId);
+      }
+      // TouchEvent fallback: resolve changed touches via active tracking when possible.
+      // If we cannot map to a tracked pointer, do nothing (scene/global pointer handlers + blur/hidden handle safety).
     };
     this.preventContextMenu = (e: Event) => {
       if (this.enabled && this.visible) e.preventDefault();
     };
     this.onFullscreenChange = () => {
-      this.updateFullscreenButtonState();
-      safeScaleRefresh(this.scene);
-      this.layout();
+      const t0 = perfNow();
+      this.fullscreenTransitionPending = false;
+      try {
+        this.updateFullscreenButtonState();
+      } catch {
+        // ignore
+      }
+      // Do not call scale.refresh() here: fullscreenchange is typically followed by resize events and
+      // Phaser/browser already coordinate canvas sizing. Only relayout touch controls (coalesced).
+      this.scheduleLayout();
+      logPerf('fullscreenchange+touch-layout-scheduled', t0);
     };
     this.onFullscreenError = () => {
-      this.updateFullscreenButtonState();
-      safeScaleRefresh(this.scene);
+      this.fullscreenTransitionPending = false;
+      try {
+        this.updateFullscreenButtonState();
+      } catch {
+        // ignore
+      }
+      this.scheduleLayout();
     };
     this.onScenePointerUp = (p: Phaser.Input.Pointer) => this.releasePointer(p.id);
     this.onGameOut = () => this.releaseAll();
@@ -568,6 +605,38 @@ export class MobileTouchControls {
       document.addEventListener('fullscreenerror', this.onFullscreenError);
       document.addEventListener('webkitfullscreenerror', this.onFullscreenError as EventListener);
     }
+  }
+
+  private scheduleLayout(): void {
+    if (!this.enabled) return;
+    if (typeof window === 'undefined') {
+      this.layout();
+      return;
+    }
+    if (this.resizeLayoutRaf) cancelAnimationFrame(this.resizeLayoutRaf);
+    if (this.resizeLayoutTimer) {
+      clearTimeout(this.resizeLayoutTimer);
+      this.resizeLayoutTimer = null;
+    }
+    this.resizeLayoutRaf = requestAnimationFrame(() => {
+      this.resizeLayoutRaf = 0;
+      const t0 = perfNow();
+      try {
+        this.layout();
+      } catch {
+        // never block game
+      }
+      logPerf('touch-layout', t0);
+    });
+    // Browser fullscreen/rotation often emits late size changes; run one cheap follow-up layout.
+    this.resizeLayoutTimer = setTimeout(() => {
+      this.resizeLayoutTimer = null;
+      try {
+        this.layout();
+      } catch {
+        // ignore
+      }
+    }, 180);
   }
 
   public read(): TouchIntent {
@@ -633,6 +702,8 @@ export class MobileTouchControls {
 
   public destroy(): void {
     this.releaseAll();
+    if (this.resizeLayoutRaf) cancelAnimationFrame(this.resizeLayoutRaf);
+    if (this.resizeLayoutTimer) clearTimeout(this.resizeLayoutTimer);
     this.scene.scale.off('resize', this.onResize);
     this.scene.input.off('pointerup', this.onScenePointerUp);
     this.scene.input.off('pointerupoutside', this.onScenePointerUp);
@@ -706,37 +777,49 @@ export class MobileTouchControls {
 
   public requestFullscreen(source: 'user' | 'auto'): void {
     if (!this.fullscreenAvailable || typeof document === 'undefined') {
+      this.fullscreenTransitionPending = false;
       this.updateFullscreenButtonState();
       return;
     }
     const doc = document as FullscreenDocument;
     const target = this.getFullscreenTarget();
     if (!target) {
+      this.fullscreenTransitionPending = false;
       this.updateFullscreenButtonState();
       return;
     }
+    // Avoid duplicate fullscreen requests during an active transition (prevents request storms on mobile).
+    if (this.fullscreenTransitionPending) return;
     try {
       if (this.isInFullscreen()) {
         if (source === 'user') {
+          this.fullscreenTransitionPending = true;
+          const t0 = perfNow();
           const result = exitFullscreenSafe(doc);
           void Promise.resolve(result)
             .catch(() => undefined)
             .finally(() => {
+              this.fullscreenTransitionPending = false;
               this.updateFullscreenButtonState();
-              safeScaleRefresh(this.scene);
+              logPerf('fullscreen-exit-request', t0);
             });
         }
         return;
       }
+      this.fullscreenTransitionPending = true;
+      const t0 = perfNow();
+      // Fire-and-forget: do not block the pointer handler / main thread waiting for fullscreen.
       const result = requestFullscreenSafe(target);
       void Promise.resolve(result)
         .then(() => tryLockLandscape())
         .catch(() => undefined)
         .finally(() => {
+          this.fullscreenTransitionPending = false;
           this.updateFullscreenButtonState();
-          safeScaleRefresh(this.scene);
+          logPerf('fullscreen-enter-request', t0);
         });
     } catch {
+      this.fullscreenTransitionPending = false;
       this.updateFullscreenButtonState();
       safeScaleRefresh(this.scene);
     }
