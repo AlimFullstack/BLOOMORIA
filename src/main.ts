@@ -47,9 +47,13 @@ function installBestEffortAutoFullscreen(): void {
 
 function updateViewportCssVars(): void {
   if (typeof window === 'undefined' || !document.documentElement) return;
+  const root = document.getElementById('app') ?? document.documentElement;
+  const rect = root.getBoundingClientRect?.();
   const vv = window.visualViewport;
-  const w = Math.max(1, Math.round(vv?.width ?? window.innerWidth));
-  const h = Math.max(1, Math.round(vv?.height ?? window.innerHeight));
+  const vw = rect?.width || vv?.width || document.documentElement.clientWidth || window.innerWidth;
+  const vh = rect?.height || vv?.height || document.documentElement.clientHeight || window.innerHeight;
+  const w = Math.max(1, Math.round(vw));
+  const h = Math.max(1, Math.round(vh));
   document.documentElement.style.setProperty('--app-vw', `${w}px`);
   document.documentElement.style.setProperty('--app-vh', `${h}px`);
 }
@@ -63,20 +67,28 @@ function installViewportHandling(refreshScale: () => void): void {
     raf = requestAnimationFrame(() => {
       raf = 0;
       updateViewportCssVars();
+      // Avoid refreshing into a collapsed viewport during rotation transitions.
+      const vw = Number.parseFloat(document.documentElement.style.getPropertyValue('--app-vw')) || 0;
+      const vh = Number.parseFloat(document.documentElement.style.getPropertyValue('--app-vh')) || 0;
+      if (vw < 32 || vh < 32) return;
       refreshScale();
     });
   };
   const scheduleDelayed = (): void => {
     schedule();
+    window.setTimeout(schedule, 50);
     window.setTimeout(schedule, 120);
-    window.setTimeout(schedule, 360);
+    window.setTimeout(schedule, 250);
+    window.setTimeout(schedule, 500);
+    window.setTimeout(schedule, 900);
   };
   window.addEventListener('resize', schedule, { passive: true });
   window.addEventListener('orientationchange', scheduleDelayed);
+  window.screen?.orientation?.addEventListener?.('change', scheduleDelayed);
   window.visualViewport?.addEventListener('resize', schedule, { passive: true });
   window.visualViewport?.addEventListener('scroll', schedule, { passive: true });
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) schedule();
+    if (!document.hidden) scheduleDelayed();
   });
   document.addEventListener('fullscreenchange', scheduleDelayed);
   document.addEventListener('webkitfullscreenchange', scheduleDelayed as EventListener);

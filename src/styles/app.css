@@ -51,11 +51,14 @@ body {
   position: relative;
   width: min(var(--app-vw), calc(var(--app-vh) * 16 / 9));
   height: min(var(--app-vh), calc(var(--app-vw) * 9 / 16));
+  min-width: 1px;
+  min-height: 1px;
   max-width: 100%;
   max-height: 100%;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
+  background: var(--app-bg);
 }
 
 #game-root canvas {
