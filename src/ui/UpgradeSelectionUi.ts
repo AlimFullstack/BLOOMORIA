@@ -113,11 +113,30 @@ export class UpgradeSelectionUi {
     const startX = cx - totalW / 2 + cardW / 2;
     const cardY = topArea + cardH / 2 + 4;
 
+    // Vertically center the whole block (title/subtitle + cards) in the safe area.
+    const blockTop = titleY - titleSize * 0.65;
+    const blockBottom = cardY + cardH / 2;
+    const blockH = blockBottom - blockTop;
+    const safeTop = inset.top + 8;
+    const centerOffset = safeTop + safeH / 2 - (blockTop + blockH / 2);
+    const maxDown = Math.max(0, safeTop + safeH - blockBottom - 4);
+    const maxUp = Math.max(0, blockTop - safeTop - 4);
+    const offsetY = Phaser.Math.Clamp(centerOffset, -maxUp, maxDown);
+
+    this.titleText
+      .setPosition(cx, titleY + offsetY)
+      .setFontSize(titleSize)
+      .setWordWrapWidth(safeW - 20);
+    this.subtitleText
+      .setPosition(cx, titleY + (compactH ? 24 : 40) + offsetY)
+      .setFontSize(subSize)
+      .setWordWrapWidth(safeW - 20);
+
     for (let i = 0; i < this.cards.length; i += 1) {
       const card = this.cards[i];
       const hit = this.hitAreas[i];
       const x = startX + i * (cardW + gap);
-      card.setPosition(x, cardY);
+      card.setPosition(x, cardY + offsetY);
       const panel = card.getByName('panel') as Phaser.GameObjects.Rectangle | null;
       panel?.setSize(cardW, cardH);
       hit.setSize(cardW, cardH);

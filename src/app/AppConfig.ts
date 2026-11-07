@@ -11,7 +11,7 @@ export const APP_CONFIG = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: 1280,
     height: 720,
-    expandParent: true,
+    expandParent: false,
   },
   physics: {
     default: 'arcade' as const,

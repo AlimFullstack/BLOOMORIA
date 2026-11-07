@@ -66,17 +66,20 @@ function installViewportHandling(refreshScale: () => void): void {
       refreshScale();
     });
   };
-  window.addEventListener('resize', schedule, { passive: true });
-  window.addEventListener('orientationchange', () => {
+  const scheduleDelayed = (): void => {
     schedule();
     window.setTimeout(schedule, 120);
     window.setTimeout(schedule, 360);
-  });
+  };
+  window.addEventListener('resize', schedule, { passive: true });
+  window.addEventListener('orientationchange', scheduleDelayed);
   window.visualViewport?.addEventListener('resize', schedule, { passive: true });
   window.visualViewport?.addEventListener('scroll', schedule, { passive: true });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) schedule();
   });
+  document.addEventListener('fullscreenchange', scheduleDelayed);
+  document.addEventListener('webkitfullscreenchange', scheduleDelayed as EventListener);
 }
 
 const game = createPhaserGame();
