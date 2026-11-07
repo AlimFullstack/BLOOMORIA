@@ -196,11 +196,11 @@ class ActionButton {
     this.cooldownGfx = scene.add.graphics();
     this.cooldownGfx.setVisible(false);
     this.hit = scene.add.rectangle(0, 0, cfg.w, cfg.h, 0xffffff, 0.001);
-    this.hit.setInteractive();
+    this.hit.setInteractive({ draggable: false, useHandCursor: false });
     this.hit.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p));
+    // Do NOT release on pointerout/pointerupoutside: on mobile, finger drift would falsely cancel hold/edge.
+    // Release handled by pointerup/pointercancel + scene/global safety handlers.
     this.hit.on('pointerup', (p: Phaser.Input.Pointer) => this.onUp(p));
-    this.hit.on('pointerupoutside', (p: Phaser.Input.Pointer) => this.onUp(p));
-    this.hit.on('pointerout', (p: Phaser.Input.Pointer) => this.onUp(p));
     this.hit.on('pointercancel', (p: Phaser.Input.Pointer) => this.onUp(p));
     this.container.add([this.bg, this.icon, this.label, this.cooldownGfx, this.hit]);
     parent.add(this.container);
@@ -381,11 +381,12 @@ class MovementJoystick {
     this.knob.setStrokeStyle(2, toHex(COLORS.joyBaseStroke), 0.9);
     // Hit area slightly larger than visual base for reliability.
     this.hit = scene.add.circle(0, 0, radius * 1.15, 0xffffff, 0.001);
-    this.hit.setInteractive();
+    this.hit.setInteractive({ draggable: false, useHandCursor: false });
     this.hit.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p));
+    // Do NOT release on pointerout/pointerupoutside: dragging the thumb moves outside the hit circle
+    // and would falsely cancel the joystick (~0.5s/drag issue on mobile). Release is handled by
+    // pointerup/pointercancel + scene/global safety handlers in MobileTouchControls.
     this.hit.on('pointerup', (p: Phaser.Input.Pointer) => this.onUp(p));
-    this.hit.on('pointerupoutside', (p: Phaser.Input.Pointer) => this.onUp(p));
-    this.hit.on('pointerout', (p: Phaser.Input.Pointer) => this.onUp(p));
     this.hit.on('pointercancel', (p: Phaser.Input.Pointer) => this.onUp(p));
     this.container.add([this.base, this.knob, this.hit]);
     parent.add(this.container);
@@ -448,6 +449,7 @@ class MovementJoystick {
   }
 
   private updateFromPointer(pointer: Phaser.Input.Pointer): void {
+    // Use screen/camera-space delta via worldX/worldY (scene uses fixed camera/scroll); works while held.
     const dx = pointer.worldX - this.centerX;
     const dy = pointer.worldY - this.centerY;
     const dist = Math.hypot(dx, dy);
