@@ -1,5 +1,30 @@
 import { createPhaserGame } from './app/createPhaserGame';
 
+function installRuntimeErrorGuards(): void {
+  if (typeof window === 'undefined') return;
+  const seen = new Set<string>();
+  const log = (kind: string, detail: unknown): void => {
+    try {
+      const msg =
+        detail instanceof Error
+          ? `${detail.name}: ${detail.message}`
+          : typeof detail === 'string'
+            ? detail
+            : JSON.stringify(detail);
+      const key = `${kind}:${msg}`.slice(0, 240);
+      if (seen.has(key)) return;
+      seen.add(key);
+      console.error(`[BLOOMORIA] ${kind}`, detail);
+    } catch {
+      // never interfere with gameplay
+    }
+  };
+  window.addEventListener('error', (e) => log('runtime-error', e.error ?? e.message));
+  window.addEventListener('unhandledrejection', (e) => log('unhandled-rejection', e.reason));
+}
+
+installRuntimeErrorGuards();
+
 function isTouchCapable(): boolean {
   if (typeof window === 'undefined') return false;
   const nav = navigator as Navigator & { maxTouchPoints?: number };
@@ -51,7 +76,8 @@ function updateViewportCssVars(): void {
   const rect = root.getBoundingClientRect?.();
   const vv = window.visualViewport;
   const vw = rect?.width || vv?.width || document.documentElement.clientWidth || window.innerWidth;
-  const vh = rect?.height || vv?.height || document.documentElement.clientHeight || window.innerHeight;
+  const vh =
+    rect?.height || vv?.height || document.documentElement.clientHeight || window.innerHeight;
   const w = Math.max(1, Math.round(vw));
   const h = Math.max(1, Math.round(vh));
   document.documentElement.style.setProperty('--app-vw', `${w}px`);
@@ -66,12 +92,18 @@ function installViewportHandling(refreshScale: () => void): void {
     if (raf) cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
       raf = 0;
-      updateViewportCssVars();
-      // Avoid refreshing into a collapsed viewport during rotation transitions.
-      const vw = Number.parseFloat(document.documentElement.style.getPropertyValue('--app-vw')) || 0;
-      const vh = Number.parseFloat(document.documentElement.style.getPropertyValue('--app-vh')) || 0;
-      if (vw < 32 || vh < 32) return;
-      refreshScale();
+      try {
+        updateViewportCssVars();
+        // Avoid refreshing into a collapsed viewport during rotation transitions (prevents black screen on mobile).
+        const vw =
+          Number.parseFloat(document.documentElement.style.getPropertyValue('--app-vw')) || 0;
+        const vh =
+          Number.parseFloat(document.documentElement.style.getPropertyValue('--app-vh')) || 0;
+        if (vw < 32 || vh < 32) return;
+        refreshScale();
+      } catch {
+        // never block game
+      }
     });
   };
   const scheduleDelayed = (): void => {

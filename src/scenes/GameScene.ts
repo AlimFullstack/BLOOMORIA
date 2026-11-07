@@ -38,6 +38,16 @@ export class GameScene extends Phaser.Scene {
   private upgradesCollected = 0;
   private pauseKeyEsc?: Phaser.Input.Keyboard.Key;
   private pauseKeyP?: Phaser.Input.Keyboard.Key;
+  private lastHudHp = -1;
+  private lastHudMaxHp = -1;
+  private lastHudWave = -1;
+  private lastHudAlive = -1;
+  private lastHudPending = -1;
+  private lastHudBossWave = false;
+  private lastBossHudVisible = false;
+  private lastBossHp = -1;
+  private lastBossMaxHp = -1;
+  private lastGameplayCursorOn = true;
 
   constructor() {
     super('GameScene');
@@ -303,18 +313,50 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private renderHud(): void {
+  private renderHud(force = false): void {
     if (!this.player || !this.waveController) {
       return;
     }
-    this.hud?.render(this.player.getHp(), this.player.getMaxHp());
+    // Only redraw HUD elements when state actually changes (big mobile perf win).
+    const hp = this.player.getHp();
+    const maxHp = this.player.getMaxHp();
+    if (force || hp !== this.lastHudHp || maxHp !== this.lastHudMaxHp) {
+      this.lastHudHp = hp;
+      this.lastHudMaxHp = maxHp;
+      this.hud?.render(hp, maxHp);
+    }
     const wave = this.waveController.getState();
-    this.waveHud?.render(wave.wave, wave.alive, wave.pending, wave.isBossWave);
+    if (
+      force ||
+      wave.wave !== this.lastHudWave ||
+      wave.alive !== this.lastHudAlive ||
+      wave.pending !== this.lastHudPending ||
+      wave.isBossWave !== this.lastHudBossWave
+    ) {
+      this.lastHudWave = wave.wave;
+      this.lastHudAlive = wave.alive;
+      this.lastHudPending = wave.pending;
+      this.lastHudBossWave = wave.isBossWave;
+      this.waveHud?.render(wave.wave, wave.alive, wave.pending, wave.isBossWave);
+    }
     this.showPendingWaveAnnouncement();
     const boss = this.waveController.getActiveBoss();
     if (boss) {
-      this.bossHud?.show(boss.getHp(), boss.getMaxHp());
-    } else {
+      const bhp = boss.getHp();
+      const bmax = boss.getMaxHp();
+      if (
+        force ||
+        !this.lastBossHudVisible ||
+        bhp !== this.lastBossHp ||
+        bmax !== this.lastBossMaxHp
+      ) {
+        this.lastBossHp = bhp;
+        this.lastBossMaxHp = bmax;
+        this.bossHud?.show(bhp, bmax);
+      }
+      this.lastBossHudVisible = true;
+    } else if (this.lastBossHudVisible || force) {
+      this.lastBossHudVisible = false;
       this.bossHud?.hide();
     }
   }
@@ -340,7 +382,7 @@ export class GameScene extends Phaser.Scene {
     this.upgradeUi?.refreshText();
     this.gameOverUi?.refreshText();
     this.waveBanner?.refreshText();
-    this.renderHud();
+    this.renderHud(true);
   }
 
   public onResumedFromPause(): void {
@@ -349,6 +391,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setGameplayCursor(gameplay: boolean): void {
+    if (gameplay === this.lastGameplayCursorOn) return;
+    this.lastGameplayCursorOn = gameplay;
     try {
       this.input.setDefaultCursor(gameplay ? 'none' : 'default');
     } catch {
