@@ -4,8 +4,11 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no"
     />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#0f1220" />
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
     <title>BLOOMORIA</title>
     <link rel="stylesheet" href="./src/styles/app.css" />
@@ -13,6 +16,14 @@
   <body>
     <div id="app">
       <div id="game-root" aria-label="BLOOMORIA game container"></div>
+      <div id="rotate-overlay" class="rotate-overlay" aria-hidden="true">
+        <div class="rotate-overlay__panel">
+          <div class="rotate-overlay__icon" aria-hidden="true">⟲</div>
+          <div class="rotate-overlay__text">
+            Поверните устройство горизонтально / Rotate to landscape
+          </div>
+        </div>
+      </div>
     </div>
     <script type="module" src="./src/main.ts"></script>
   </body>

@@ -90,6 +90,15 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.scale.on('resize', this.handleScaleResize, this);
+    this.game.events.on(Phaser.Core.Events.BLUR, this.onVisibilityOrBlur, this);
+    this.game.events.on(Phaser.Core.Events.HIDDEN, this.onVisibilityOrBlur, this);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.onVisibilityOrBlur);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('blur', this.onVisibilityOrBlur);
+      window.addEventListener('pagehide', this.onVisibilityOrBlur);
+    }
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanup, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanup, this);
   }
@@ -103,6 +112,11 @@ export class GameScene extends Phaser.Scene {
       // ignore
     }
   }
+
+  private onVisibilityOrBlur = (): void => {
+    // Prevent stuck movement/attack/joystick after focus loss, tab switch, or app return.
+    this.touchControls?.releaseAll();
+  };
 
   public update(_time: number, delta: number): void {
     if (!this.player || !this.inputController || !this.waveController) {
@@ -443,6 +457,15 @@ export class GameScene extends Phaser.Scene {
 
   private cleanup(): void {
     this.scale.off('resize', this.handleScaleResize, this);
+    this.game.events.off(Phaser.Core.Events.BLUR, this.onVisibilityOrBlur, this);
+    this.game.events.off(Phaser.Core.Events.HIDDEN, this.onVisibilityOrBlur, this);
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.onVisibilityOrBlur);
+    }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('blur', this.onVisibilityOrBlur);
+      window.removeEventListener('pagehide', this.onVisibilityOrBlur);
+    }
     this.runOver = false;
     this.upgradeSelectionActive = false;
     this.upgradesCollected = 0;

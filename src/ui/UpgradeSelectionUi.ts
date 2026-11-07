@@ -7,6 +7,7 @@ import {
   getHealthUpgradeBonusHp,
 } from '../data/upgrades/healthUpgrade';
 import { AudioManager } from '../audio/AudioManager';
+import { readSafeInsets } from './responsive/safeArea';
 
 const toHex = (hex: string): number => Phaser.Display.Color.HexStringToColor(hex).color;
 
@@ -24,12 +25,14 @@ const COLORS = {
 
 export class UpgradeSelectionUi {
   private readonly container: Phaser.GameObjects.Container;
+  private readonly bg: Phaser.GameObjects.Rectangle;
   private readonly titleText: Phaser.GameObjects.Text;
   private readonly subtitleText: Phaser.GameObjects.Text;
   private readonly cards: Phaser.GameObjects.Container[] = [];
   private readonly hitAreas: Phaser.GameObjects.Rectangle[] = [];
   private active = false;
   private lastOffers: readonly UpgradeDefinition[] = [];
+  private readonly onSelect: (upgrade: UpgradeDefinition) => void;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -37,49 +40,106 @@ export class UpgradeSelectionUi {
     private readonly getCurrentMaxHp: () => number,
     private readonly getCurrentAttackDamage: () => number,
   ) {
-    const w = scene.scale.width;
-    const h = scene.scale.height;
+    this.onSelect = onSelect;
     this.container = scene.add.container(0, 0);
     this.container.setDepth(200);
     this.container.setScrollFactor(0);
     this.container.setVisible(false);
 
-    const bg = scene.add.rectangle(w / 2, h / 2, w, h, toHex(COLORS.overlay), 0.72);
-    bg.setInteractive();
-    this.container.add(bg);
+    this.bg = scene.add.rectangle(0, 0, 10, 10, toHex(COLORS.overlay), 0.78);
+    this.bg.setInteractive();
+    this.container.add(this.bg);
 
-    this.titleText = scene.add.text(w / 2, 150, t('upgrade.waveCleared'), {
+    this.titleText = scene.add.text(0, 0, t('upgrade.waveCleared'), {
       fontFamily: 'monospace',
       fontSize: '34px',
       color: COLORS.title,
       fontStyle: 'bold',
+      align: 'center',
+      wordWrap: { width: 900 },
     });
     this.titleText.setOrigin(0.5);
-    this.subtitleText = scene.add.text(w / 2, 194, t('upgrade.chooseOne'), {
+    this.subtitleText = scene.add.text(0, 0, t('upgrade.chooseOne'), {
       fontFamily: 'monospace',
       fontSize: '18px',
       color: COLORS.subtitle,
+      align: 'center',
+      wordWrap: { width: 900 },
     });
     this.subtitleText.setOrigin(0.5);
     this.container.add([this.titleText, this.subtitleText]);
 
-    const cardW = 240;
-    const cardH = 170;
-    const gap = 26;
-    const startX = w / 2 - (cardW * 3 + gap * 2) / 2 + cardW / 2;
-    const y = 360;
     for (let i = 0; i < 3; i += 1) {
-      const cx = startX + i * (cardW + gap);
-      const card = this.createCard(cx, y, cardW, cardH, onSelect);
+      const card = this.createCard();
       this.cards.push(card.container);
       this.hitAreas.push(card.hit);
       this.container.add(card.container);
     }
+    this.layout();
+    scene.scale.on(Phaser.Scale.Events.RESIZE, this.layout, this);
   }
+
+  private layout = (): void => {
+    const w = this.scene.scale.width;
+    const h = this.scene.scale.height;
+    const inset = readSafeInsets(this.scene);
+    const safeW = Math.max(200, w - inset.left - inset.right - 16);
+    const safeH = Math.max(180, h - inset.top - inset.bottom - 16);
+    const cx = inset.left + 8 + safeW / 2;
+    this.bg.setPosition(w / 2, h / 2).setSize(w, h);
+
+    const compactH = h < 430;
+    const veryTight = w < 560 || h < 350;
+    const titleSize = compactH ? 22 : 34;
+    const subSize = compactH ? 14 : 18;
+    const titleY = inset.top + 8 + (compactH ? 18 : 34);
+    this.titleText
+      .setPosition(cx, titleY)
+      .setFontSize(titleSize)
+      .setWordWrapWidth(safeW - 20);
+    this.subtitleText
+      .setPosition(cx, titleY + (compactH ? 24 : 40))
+      .setFontSize(subSize)
+      .setWordWrapWidth(safeW - 20);
+
+    const gap = compactH ? 8 : 16;
+    const cardW = veryTight
+      ? Math.min(safeW - 8, Math.max(150, Math.floor((safeW - gap * 2) / 3)))
+      : Phaser.Math.Clamp(Math.floor((safeW - gap * 2) / 3), 150, 240);
+    const topArea = titleY + (compactH ? 42 : 62);
+    const availableH = inset.top + 8 + safeH - topArea - 8;
+    const cardH = Phaser.Math.Clamp(Math.floor(availableH), veryTight ? 120 : 130, 190);
+    const totalW = cardW * 3 + gap * 2;
+    const startX = cx - totalW / 2 + cardW / 2;
+    const cardY = topArea + cardH / 2 + 4;
+
+    for (let i = 0; i < this.cards.length; i += 1) {
+      const card = this.cards[i];
+      const hit = this.hitAreas[i];
+      const x = startX + i * (cardW + gap);
+      card.setPosition(x, cardY);
+      const panel = card.getByName('panel') as Phaser.GameObjects.Rectangle | null;
+      panel?.setSize(cardW, cardH);
+      hit.setSize(cardW, cardH);
+      const name = card.getByName('name') as Phaser.GameObjects.Text | null;
+      const desc = card.getByName('desc') as Phaser.GameObjects.Text | null;
+      const nameSize = cardH < 145 ? 14 : 19;
+      const descSize = cardH < 145 ? 11 : 13;
+      name
+        ?.setPosition(0, -cardH * 0.24)
+        .setFontSize(nameSize)
+        .setWordWrapWidth(cardW - 16);
+      desc
+        ?.setPosition(0, cardH * 0.08)
+        .setFontSize(descSize)
+        .setWordWrapWidth(cardW - 16);
+    }
+  };
 
   public show(upgrades: readonly UpgradeDefinition[]): void {
     this.active = true;
     this.lastOffers = upgrades;
+    this.layout();
     this.refreshText();
     AudioManager.uiUpgradeAppear();
     this.container.setVisible(true);
@@ -103,7 +163,6 @@ export class UpgradeSelectionUi {
   public refreshText(): void {
     this.titleText.setText(t('upgrade.waveCleared'));
     this.subtitleText.setText(t('upgrade.chooseOne'));
-    // Use the same max HP snapshot for all cards in this offer/refresh to keep UI consistent.
     const currentMaxHp = this.getCurrentMaxHp();
     for (let i = 0; i < this.cards.length; i += 1) {
       const card = this.cards[i];
@@ -123,7 +182,6 @@ export class UpgradeSelectionUi {
     currentAttackDamage = this.getCurrentAttackDamage(),
   ): string {
     if (upgrade.id === 'max_hp') {
-      // Runtime applies the same computed value at pick time; UI text uses current max HP.
       const bonusHp = getHealthUpgradeBonusHp(currentMaxHp);
       return t('upgrade.max_hp.desc', { bonus: bonusHp });
     }
@@ -148,20 +206,18 @@ export class UpgradeSelectionUi {
   }
 
   public destroy(): void {
+    this.scene.scale.off(Phaser.Scale.Events.RESIZE, this.layout, this);
     this.container.destroy(true);
     this.cards.length = 0;
     this.hitAreas.length = 0;
   }
 
-  private createCard(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    onSelect: (upgrade: UpgradeDefinition) => void,
-  ): { container: Phaser.GameObjects.Container; hit: Phaser.GameObjects.Rectangle } {
-    const container = this.scene.add.container(x, y);
-    const panel = this.scene.add.rectangle(0, 0, w, h, toHex(COLORS.panel), 1);
+  private createCard(): {
+    container: Phaser.GameObjects.Container;
+    hit: Phaser.GameObjects.Rectangle;
+  } {
+    const container = this.scene.add.container(0, 0);
+    const panel = this.scene.add.rectangle(0, 0, 200, 150, toHex(COLORS.panel), 1);
     panel.setName('panel');
     panel.setStrokeStyle(3, toHex(COLORS.border), 1);
 
@@ -171,7 +227,7 @@ export class UpgradeSelectionUi {
       color: COLORS.name,
       fontStyle: 'bold',
       align: 'center',
-      wordWrap: { width: w - 28 },
+      wordWrap: { width: 180 },
     });
     name.setName('name');
     name.setOrigin(0.5);
@@ -181,12 +237,12 @@ export class UpgradeSelectionUi {
       fontSize: '14px',
       color: COLORS.desc,
       align: 'center',
-      wordWrap: { width: w - 28 },
+      wordWrap: { width: 180 },
     });
     desc.setName('desc');
     desc.setOrigin(0.5);
 
-    const hit = this.scene.add.rectangle(0, 0, w, h, 0xffffff, 0.001);
+    const hit = this.scene.add.rectangle(0, 0, 200, 150, 0xffffff, 0.001);
     hit.setInteractive({ useHandCursor: true });
     hit.on('pointerover', () => {
       if (this.active) {
@@ -202,7 +258,7 @@ export class UpgradeSelectionUi {
       const upgrade = hit.getData('upgrade') as UpgradeDefinition | undefined;
       if (upgrade) {
         AudioManager.uiUpgradeSelect();
-        onSelect(upgrade);
+        this.onSelect(upgrade);
       }
     });
 

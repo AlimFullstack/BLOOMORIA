@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { t } from '../i18n/i18n';
+import { readSafeInsets } from './responsive/safeArea';
 
 type BannerPhase = 'idle' | 'in' | 'hold' | 'out';
 
@@ -28,7 +29,12 @@ export class WaveAnnouncementBanner {
   private lastShownWave = 0;
 
   constructor(private readonly scene: Phaser.Scene) {
-    this.baseY = (): number => Math.round(this.scene.scale.height * VIEWPORT_Y_RATIO);
+    this.baseY = (): number => {
+      const inset = readSafeInsets(this.scene);
+      return Math.round(
+        inset.top + (this.scene.scale.height - inset.top - inset.bottom) * VIEWPORT_Y_RATIO,
+      );
+    };
     const x = this.scene.scale.width / 2;
     this.container = scene.add.container(x, this.baseY());
     this.container.setDepth(DEPTH);
@@ -46,6 +52,7 @@ export class WaveAnnouncementBanner {
         align: 'center',
         stroke: '#0D1526',
         strokeThickness: 5,
+        wordWrap: { width: Math.max(180, scene.scale.width - 40) },
       })
       .setOrigin(0.5);
 
@@ -165,13 +172,19 @@ export class WaveAnnouncementBanner {
   }
 
   private applyCurrentText(announcement: Announcement): void {
+    const inset = readSafeInsets(this.scene);
+    const safeW = Math.max(160, this.scene.scale.width - inset.left - inset.right - 24);
+    const compact = this.scene.scale.height < 430;
     const label = announcement.isBossWave
       ? t('banner.bossWave')
       : t('banner.wave', { wave: announcement.wave });
     this.text.setText(label);
-    this.text.setFontSize(announcement.isBossWave ? '40px' : '34px');
+    this.text.setWordWrapWidth(safeW - 32);
+    this.text.setFontSize(
+      announcement.isBossWave ? (compact ? '26px' : '40px') : compact ? '22px' : '34px',
+    );
     this.text.setColor(announcement.isBossWave ? '#FFF3C8' : '#F4F8FF');
-    this.text.setStroke(announcement.isBossWave ? '#3A2210' : '#0D1526', 5);
+    this.text.setStroke(announcement.isBossWave ? '#3A2210' : '#0D1526', compact ? 4 : 5);
     this.drawBackground(announcement.isBossWave);
   }
 

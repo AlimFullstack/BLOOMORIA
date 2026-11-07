@@ -45,5 +45,46 @@ function installBestEffortAutoFullscreen(): void {
   window.addEventListener('keydown', onFirstGesture, { capture: true, once: true });
 }
 
-createPhaserGame();
+function updateViewportCssVars(): void {
+  if (typeof window === 'undefined' || !document.documentElement) return;
+  const vv = window.visualViewport;
+  const w = Math.max(1, Math.round(vv?.width ?? window.innerWidth));
+  const h = Math.max(1, Math.round(vv?.height ?? window.innerHeight));
+  document.documentElement.style.setProperty('--app-vw', `${w}px`);
+  document.documentElement.style.setProperty('--app-vh', `${h}px`);
+}
+
+function installViewportHandling(refreshScale: () => void): void {
+  if (typeof window === 'undefined') return;
+  updateViewportCssVars();
+  let raf = 0;
+  const schedule = (): void => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      updateViewportCssVars();
+      refreshScale();
+    });
+  };
+  window.addEventListener('resize', schedule, { passive: true });
+  window.addEventListener('orientationchange', () => {
+    schedule();
+    window.setTimeout(schedule, 120);
+    window.setTimeout(schedule, 360);
+  });
+  window.visualViewport?.addEventListener('resize', schedule, { passive: true });
+  window.visualViewport?.addEventListener('scroll', schedule, { passive: true });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) schedule();
+  });
+}
+
+const game = createPhaserGame();
 installBestEffortAutoFullscreen();
+installViewportHandling(() => {
+  try {
+    game.scale.refresh();
+  } catch {
+    // ignore
+  }
+});

@@ -1,4 +1,5 @@
-﻿import Phaser from 'phaser';
+import Phaser from 'phaser';
+import { readSafeInsets } from './responsive/safeArea';
 
 export interface TouchIntent {
   left: boolean;
@@ -111,29 +112,6 @@ function safeScaleRefresh(scene: Phaser.Scene): void {
   }
 }
 
-function readSafeInsets(): { left: number; right: number; bottom: number } {
-  if (typeof document === 'undefined' || !document.body) {
-    return { left: 0, right: 0, bottom: 0 };
-  }
-  const el = document.createElement('div');
-  el.style.cssText =
-    'position:fixed;left:0;bottom:0;visibility:hidden;pointer-events:none;' +
-    'padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom);';
-  document.body.appendChild(el);
-  const cs = getComputedStyle(el);
-  const px = (v: string): number => {
-    const n = Number.parseFloat(v);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const insets = {
-    left: px(cs.paddingLeft),
-    right: px(cs.paddingRight),
-    bottom: px(cs.paddingBottom),
-  };
-  el.remove();
-  return insets;
-}
-
 function isTouchDevice(scene: Phaser.Scene): boolean {
   const touchCapable = !!scene.sys.game.device.input.touch;
   const maxPoints =
@@ -232,6 +210,10 @@ class ActionButton {
 
   public collectCapturedPointers(out: Set<number>): void {
     for (const id of this.activePointers) out.add(id);
+  }
+
+  public setDisplayScale(scale: number): void {
+    this.container.setScale(scale);
   }
 
   public setPosition(x: number, y: number): void {
@@ -400,6 +382,10 @@ class MovementJoystick {
     scene.input.on('pointermove', this.onScenePointerMove);
   }
 
+  public setDisplayScale(scale: number): void {
+    this.container.setScale(scale);
+  }
+
   public setPosition(x: number, y: number): void {
     this.centerX = x;
     this.centerY = y;
@@ -456,8 +442,9 @@ class MovementJoystick {
 
   private updateFromPointer(pointer: Phaser.Input.Pointer): void {
     // Track the activating pointer anywhere (including far outside the visual joystick/canvas deltas).
-    const dx = pointer.worldX - this.centerX;
-    const dy = pointer.worldY - this.centerY;
+    const s = this.container.scaleX || 1;
+    const dx = (pointer.worldX - this.centerX) / s;
+    const dy = (pointer.worldY - this.centerY) / s;
     const dist = Math.hypot(dx, dy);
     const max = this.radius * 0.72;
     const clamped = dist > max && dist > 0 ? max / dist : 1;
@@ -824,29 +811,37 @@ export class MobileTouchControls {
     if (!this.enabled) return;
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
-    const inset = readSafeInsets();
-    const margin = 14;
-    const gap = 12;
+    const inset = readSafeInsets(this.scene);
+    const margin = Phaser.Math.Clamp(Math.round(h * 0.02), 10, 18);
+    const gap = Phaser.Math.Clamp(Math.round(h * 0.016), 8, 14);
 
-    // Left: joystick (up = jump). 3x larger, safe-area aware; stays tracked when finger leaves area.
+    // Left: joystick (up = jump). Responsive size for small phones/tablets; safe-area aware.
     if (this.joystick) {
-      const joyR = 216;
-      const joyX = margin + inset.left + joyR + 10;
-      const joyY = h - margin - inset.bottom - joyR - 8;
+      const joyR = Phaser.Math.Clamp(Math.round(h * 0.155), 92, 160);
+      // joystick internal base radius is fixed to constructor value; scale the container instead
+      const baseR = 216;
+      const s = joyR / baseR;
+      (this.joystick as unknown as { setDisplayScale?: (v: number) => void }).setDisplayScale?.(s);
+      const joyX = margin + inset.left + joyR + 8;
+      const joyY = h - margin - inset.bottom - joyR - 6;
       this.joystick.setPosition(joyX, joyY);
     }
 
-    // Right cluster bottom-right: [Slam] [Dash] [Attack] (larger hit areas).
+    // Right cluster bottom-right: [Slam] [Dash] [Attack] responsive + safe-area.
     const attackBtn = this.buttonById.get('attack');
     const dashBtn = this.buttonById.get('dash');
     const slamBtn = this.buttonById.get('slam');
     if (attackBtn && dashBtn) {
-      const aw = 132;
-      const ah = 132;
-      const dw = 118;
-      const dh = 118;
-      const sw = 96;
-      const sh = 96;
+      const ui = Phaser.Math.Clamp(h / 720, 0.72, 1.15);
+      const aw = 132 * ui;
+      const ah = 132 * ui;
+      const dw = 118 * ui;
+      const dh = 118 * ui;
+      const sw = 96 * ui;
+      const sh = 96 * ui;
+      attackBtn.setDisplayScale(ui);
+      dashBtn.setDisplayScale(ui);
+      slamBtn?.setDisplayScale(ui);
       const baseY = h - margin - inset.bottom - ah / 2;
       const attackX = w - margin - inset.right - aw / 2;
       attackBtn.setPosition(attackX, baseY);
@@ -860,11 +855,13 @@ export class MobileTouchControls {
     // Small fullscreen toggle (mobile-only, when API available) top-right, left of PauseButton.
     const fsBtn = this.buttonById.get('fullscreen');
     if (fsBtn) {
-      const fw = 52;
-      const fh = 40;
-      const pauseW = 44;
+      const ui = Phaser.Math.Clamp(h / 720, 0.8, 1.1);
+      const fw = 52 * ui;
+      const fh = 40 * ui;
+      fsBtn.setDisplayScale(ui);
+      const pauseW = 44 * ui;
       const fsX = w - margin - inset.right - pauseW - gap - fw / 2;
-      fsBtn.setPosition(fsX, Math.max(margin + fh / 2, 36));
+      fsBtn.setPosition(fsX, Math.max(margin + inset.top + fh / 2, 30));
     }
   }
 }
