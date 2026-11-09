@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+import { chromium } from 'playwright';
 
 async function runTests() {
   const browser = await chromium.launch({ headless: false });
@@ -124,7 +124,7 @@ async function runTests() {
   }
 
   // Helper to wait until player is not invulnerable
-  async function waitForInvulnerabilityClear() {
+  async function _waitForInvulnerabilityClear() {
     await waitForCondition(async () => {
       const state = await getPlayerState();
       return state && !state.isInvulnerable && state.invulnerabilityRemainingMs === 0;
@@ -378,7 +378,7 @@ async function runTests() {
 
     const lowHpState = await getPlayerState();
     if (lowHpState.hp <= 1) {
-      const initialHp = lowHpState.hp;
+      const _initialHp = lowHpState.hp;
       const direction = grunt.x > lowHpState.x ? 'ArrowRight' : 'ArrowLeft';
       await page.keyboard.down(direction);
       await page.waitForTimeout(2000);
