@@ -1,6 +1,15 @@
 ﻿import Phaser from 'phaser';
 import { AudioManager } from '../../audio/AudioManager';
+
 import { PLAYER_BALANCE } from '../../data/balance/player.balance';
+import {
+  UPGRADE_BALANCE,
+  type UpgradeId,
+  getPlayerAttackCooldownMs,
+  getPlayerAttackDamage,
+  getPlayerMoveSpeed,
+  clampStat,
+} from '../../data/balance/playerUpgrades.balance';
 import type { MovementIntent } from '../../input/KeyboardInput';
 import {
   PlayerView,
@@ -9,16 +18,12 @@ import {
   type LookTarget,
   type PlayerVisualState,
 } from './PlayerView';
-
 import {
   getHealthUpgradeBonusHp,
-  getDamageUpgradeBonus,
   getHealAmountTenPercent,
 } from '../../data/upgrades/healthUpgrade';
 
-type UpgradeId = 'max_hp' | 'damage' | 'move_speed' | 'attack_speed' | 'heal';
-
-const MIN_ATTACK_COOLDOWN_MS = 120;
+export type UpgradeCounts = Partial<Record<UpgradeId, number>>;
 
 export class Player {
   private readonly bodyObject: Phaser.GameObjects.Rectangle;
@@ -28,11 +33,7 @@ export class Player {
   private state: PlayerVisualState = 'FALLING';
   private maxHp: number = PLAYER_BALANCE.maxHp;
   private hp: number = PLAYER_BALANCE.maxHp;
-  private attackDamage: number = PLAYER_BALANCE.attackDamage;
-  private moveSpeed: number = PLAYER_BALANCE.moveSpeed;
-  private attackCooldownMs: number = PLAYER_BALANCE.attackCooldownMs;
-  private moveSpeedSteps = 0;
-  private attackSpeedSteps = 0;
+  private upgradeCounts: UpgradeCounts = {};
   private readonly jumpSpeed: number = PLAYER_BALANCE.jumpSpeed;
   private readonly invulnerabilityMs: number = PLAYER_BALANCE.invulnerabilityMs;
   private readonly attackDurationMs: number = PLAYER_BALANCE.attackDurationMs;
@@ -62,6 +63,8 @@ export class Player {
   private wasOnGround = false;
   private footstepMs = 0;
   private damageFlashPending = false;
+  private _wasDashing = false;
+  private _wasGroundSlamming = false;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -70,13 +73,11 @@ export class Player {
   ) {
     this.bodyObject = this.scene.add.rectangle(x, y, PLAYER_BALANCE.width, PLAYER_BALANCE.height);
     this.bodyObject.setVisible(false);
-
     this.scene.physics.add.existing(this.bodyObject);
     this.body = this.bodyObject.body as Phaser.Physics.Arcade.Body;
     this.body.setSize(PLAYER_BALANCE.width, PLAYER_BALANCE.height);
     this.body.setCollideWorldBounds(true);
-    this.body.setMaxVelocity(Math.max(this.moveSpeed, this.dashSpeed), 1600);
-
+    this.syncBodyLimits();
     this.view = new PlayerView(this.scene);
     this.wasOnGround = false;
     this.render(0, null);
@@ -85,39 +86,48 @@ export class Player {
   public getBodyObject(): Phaser.GameObjects.Rectangle {
     return this.bodyObject;
   }
-
   public getHp(): number {
     return this.hp;
   }
-
   public getMaxHp(): number {
     return this.maxHp;
   }
-
   public getAttackDamage(): number {
-    return this.attackDamage;
+    return getPlayerAttackDamage(PLAYER_BALANCE.attackDamage, this.upgradeCounts.damage ?? 0);
+  }
+  public getMoveSpeed(): number {
+    return getPlayerMoveSpeed(PLAYER_BALANCE.moveSpeed, this.upgradeCounts.move_speed ?? 0);
+  }
+  public getAttackCooldownMs(): number {
+    return getPlayerAttackCooldownMs(
+      PLAYER_BALANCE.attackCooldownMs,
+      this.upgradeCounts.attack_speed ?? 0,
+    );
+  }
+  public getUpgradeCounts(): UpgradeCounts {
+    return { ...this.upgradeCounts };
   }
 
   public getAttackCooldownState(): { remainingMs: number; durationMs: number } {
     return {
       remainingMs: Math.max(0, this.attackCooldownRemainingMs),
-      // Current real cooldown stat (attack speed upgrades affect this); reflects actual ability timing.
-      durationMs: Math.max(1, this.attackCooldownMs),
+      durationMs: Math.max(1, this.getAttackCooldownMs()),
     };
   }
-
   public getDashCooldownState(): { remainingMs: number; durationMs: number } {
     return {
       remainingMs: Math.max(0, this.dashCooldownRemainingMs),
       durationMs: Math.max(1, this.dashCooldownMs),
     };
   }
-
   public getGroundSlamCooldownState(): { remainingMs: number; durationMs: number } {
     return {
       remainingMs: Math.max(0, this.groundSlamCooldownRemainingMs),
       durationMs: Math.max(1, this.groundSlamCooldownMs),
     };
+  }
+  public getInvulnerabilityRemainingMs(): number {
+    return this.invulnerabilityRemainingMs;
   }
 
   public consumeDamageFlash(): boolean {
@@ -125,7 +135,6 @@ export class Player {
     this.damageFlashPending = false;
     return true;
   }
-
   public consumeGroundSlamImpact(): {
     x: number;
     bottomY: number;
@@ -137,112 +146,83 @@ export class Player {
     this.groundSlamImpact = null;
     return { ...impact, radius: PLAYER_BALANCE.groundSlamRadius };
   }
-
   public hasGroundSlamHitTarget(target: object): boolean {
     return this.groundSlamHitTargets.has(target);
   }
-
   public markGroundSlamHitTarget(target: object): void {
     this.groundSlamHitTargets.add(target);
   }
-
   public isDead(): boolean {
     return this.dead;
   }
 
   public heal(amount: number): void {
-    if (this.dead || amount <= 0) {
-      return;
-    }
-    this.hp = Math.min(this.maxHp, this.hp + amount);
+    if (this.dead || !Number.isFinite(amount) || amount <= 0) return;
+    this.hp = clampStat(this.hp + amount, 0, this.maxHp);
   }
-
   public restoreFullHealth(): void {
-    if (this.dead) return;
-    this.hp = this.maxHp;
+    if (!this.dead) this.hp = this.maxHp;
   }
 
   public applyUpgrade(upgradeId: string): void {
-    if (this.dead) {
-      return;
-    }
+    if (this.dead) return;
     const id = upgradeId as UpgradeId;
+    const rule = UPGRADE_BALANCE[id];
+    if (!rule) return;
+    const current = this.upgradeCounts[id] ?? 0;
+    if (current >= rule.maxStacks) return; // safety; UI should filter
+    this.upgradeCounts[id] = current + 1;
+
     switch (id) {
       case 'max_hp': {
-        // Calculated once at selection time from current max HP (integer, min 1). Not percent-stacked.
         const bonusHp = getHealthUpgradeBonusHp(this.maxHp);
-        this.maxHp += bonusHp;
-        // Preserve existing heal-on-pick intent by restoring the gained capacity (capped to new max).
-        this.hp = Math.min(this.maxHp, this.hp + bonusHp);
-        this.body.setMaxVelocity(Math.max(this.moveSpeed, this.dashSpeed), 1600);
+        this.maxHp = clampStat(this.maxHp + bonusHp, 1, 99);
+        this.hp = clampStat(this.hp + bonusHp, 0, this.maxHp);
         break;
       }
-      case 'damage': {
-        // Fixed integer bonus computed once at selection time; minimum +1.
-        this.attackDamage = Math.max(
-          0.1,
-          this.attackDamage + getDamageUpgradeBonus(this.attackDamage),
-        );
-        break;
-      }
-      case 'move_speed':
-        this.moveSpeedSteps += 1;
-        this.recalcStatsFromBase();
-        break;
-      case 'attack_speed':
-        this.attackSpeedSteps += 1;
-        this.recalcStatsFromBase();
-        break;
       case 'heal':
-        this.hp = Math.min(this.maxHp, this.hp + this.healAmountForTenPercent());
+        this.hp = clampStat(this.hp + getHealAmountTenPercent(this.maxHp), 0, this.maxHp);
+        break;
+      case 'damage':
+      case 'move_speed':
+      case 'attack_speed':
+        // derived from base + counts in getters; no direct mutation of base stats
         break;
       default:
         break;
     }
+    this.syncBodyLimits();
   }
 
-  private healAmountForTenPercent(): number {
-    // Integer heal: 10% of current max HP, minimum 1 (consistent with percent-of-max rounding).
-    return getHealAmountTenPercent(this.maxHp);
-  }
-
-  private recalcStatsFromBase(): void {
-    // max HP and attack damage are handled by their upgrades (fixed bonus at pick time). Other upgrades
-    // recalculate from PLAYER_BALANCE base values and their own step counts only.
-    this.moveSpeed = Math.max(
-      1,
-      Math.round(PLAYER_BALANCE.moveSpeed * (1 + 0.1 * this.moveSpeedSteps)),
-    );
-    this.attackCooldownMs = Math.max(
-      MIN_ATTACK_COOLDOWN_MS,
-      Math.round(PLAYER_BALANCE.attackCooldownMs / (1 + 0.1 * this.attackSpeedSteps)),
-    );
-    this.hp = Math.min(this.hp, this.maxHp);
+  private syncBodyLimits(): void {
+    this.body.setMaxVelocity(Math.max(this.getMoveSpeed(), this.dashSpeed), 1600);
   }
 
   public isDeathEffectFinished(): boolean {
     return this.deathEffectFinished;
   }
-
   public isInvulnerable(): boolean {
-    return this.invulnerabilityRemainingMs > 0 || this.isDashing();
+    return this.invulnerabilityRemainingMs > 0 || this.isDashing() || this.groundSlamPending;
   }
-
   public isDashing(): boolean {
     return this.dashRemainingMs > 0;
   }
-
+  public isGroundSlamming(): boolean {
+    return this.groundSlamPending;
+  }
+  public wasDashingThisFrame(): boolean {
+    return this._wasDashing;
+  }
+  public wasGroundSlammingThisFrame(): boolean {
+    return this._wasGroundSlamming;
+  }
   public getAttackHitbox(): Phaser.Geom.Rectangle | null {
-    if (this.dead || this.attackRemainingMs <= 0) {
-      return null;
-    }
+    if (this.dead || this.attackRemainingMs <= 0) return null;
     return this.createAttackHitbox();
   }
-
   public hasHitTarget(target: object): boolean {
     return this.attackTargets.has(target);
   }
-
   public markHitTarget(target: object): void {
     this.attackTargets.add(target);
   }
@@ -257,17 +237,16 @@ export class Player {
       this.updateDeathEffect(delta);
       return;
     }
-
+    // Capture dash/slam state BEFORE tickTimers decrements timers
+    this._wasDashing = this.isDashing();
+    this._wasGroundSlamming = this.isGroundSlamming();
     this.tickTimers(delta);
-    if (intent.downPressed) {
-      this.tryGroundSlam();
-    }
+    if (intent.downPressed) this.tryGroundSlam();
 
     const horizontal = (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
-    if (intent.dashPressed) {
-      this.tryDash(horizontal);
-    }
+    if (intent.dashPressed) this.tryDash(horizontal);
 
+    const moveSpeed = this.getMoveSpeed();
     if (this.isDashing()) {
       this.body.setVelocityX(this.dashDirection * this.dashSpeed);
       this.facing = this.dashDirection;
@@ -281,10 +260,8 @@ export class Player {
         this.dashTrailMs = 35;
       }
     } else {
-      this.body.setVelocityX(horizontal * this.moveSpeed);
-      if (horizontal !== 0) {
-        this.facing = horizontal > 0 ? 1 : -1;
-      }
+      this.body.setVelocityX(horizontal * moveSpeed);
+      if (horizontal !== 0) this.facing = horizontal > 0 ? 1 : -1;
     }
 
     const onGround = this.body.blocked.down || this.body.touching.down;
@@ -299,7 +276,7 @@ export class Player {
         this.groundSlamImpact = {
           x: this.bodyObject.x,
           bottomY: this.body.bottom,
-          damage: this.attackDamage,
+          damage: this.getAttackDamage(),
         };
         this.view.emitGroundSlam(this.bodyObject.x, this.body.bottom);
       }
@@ -319,10 +296,7 @@ export class Player {
     }
     this.wasOnGround = onGround;
 
-    if (intent.attackHeld) {
-      this.tryAttack(intent.attackByPointer, lookTarget, aimTarget);
-    }
-
+    if (intent.attackHeld) this.tryAttack(intent.attackByPointer, lookTarget, aimTarget);
     this.state = this.resolveState(this.isDashing() ? this.dashDirection : horizontal, onGround);
     this.render(delta, lookTarget);
   }
@@ -335,35 +309,24 @@ export class Player {
     const v = Phaser.Math.Clamp(vertical, 0, 700);
     if (h <= 0 && v <= 0) return;
     this.body.setVelocityX(dirX * h);
-    if (v > 0) {
-      this.body.setVelocityY(Math.min(this.body.velocity.y, -v));
-    }
+    if (v > 0) this.body.setVelocityY(Math.min(this.body.velocity.y, -v));
   }
 
   public takeDamage(amount: number): boolean {
-    if (this.dead || this.isInvulnerable()) {
-      return false;
-    }
-
-    // Enemy->player damage only: round down to integer at application (1.9->1, 0.5->0). Never negative.
-    const dealt = Math.max(0, Math.floor(amount));
-    if (dealt <= 0) {
-      return false;
-    }
-    this.hp = Math.max(0, this.hp - dealt);
+    if (this.dead || this.isInvulnerable()) return false;
+    const dealt = Math.max(0, Math.floor(Number(amount) || 0));
+    if (dealt <= 0) return false;
+    this.hp = clampStat(this.hp - dealt, 0, this.maxHp);
     this.invulnerabilityRemainingMs = this.invulnerabilityMs;
     this.damageFlashPending = true;
     AudioManager.playerDamage();
-    if (this.hp <= 0) {
-      this.die();
-    }
+    if (this.hp <= 0) this.die();
     return true;
   }
 
   public emitHitImpact(x: number, y: number, dirX: number, dirY: number): void {
     this.view.emitHitImpact(x, y, dirX, dirY);
   }
-
   public destroy(): void {
     this.view.destroy();
     this.body.destroy();
@@ -371,9 +334,7 @@ export class Player {
   }
 
   private tryDash(horizontal: number): void {
-    if (this.dead || this.isDashing() || this.dashCooldownRemainingMs > 0) {
-      return;
-    }
+    if (this.dead || this.isDashing() || this.dashCooldownRemainingMs > 0) return;
     this.dashDirection = horizontal !== 0 ? (horizontal > 0 ? 1 : -1) : this.facing;
     this.facing = this.dashDirection;
     this.dashRemainingMs = this.dashDurationMs;
@@ -390,23 +351,12 @@ export class Player {
   }
 
   private tryGroundSlam(): void {
-    if (this.dead || this.groundSlamPending || this.groundSlamImpact) {
-      return;
-    }
-    if (this.groundSlamCooldownRemainingMs > 0) {
-      return;
-    }
-    if (this.isDashing() || this.isInvulnerable()) {
-      return;
-    }
+    if (this.dead || this.groundSlamPending || this.groundSlamImpact) return;
+    if (this.groundSlamCooldownRemainingMs > 0 || this.isDashing() || this.isInvulnerable()) return;
     const onGround = this.body.blocked.down || this.body.touching.down;
-    if (onGround) {
-      return;
-    }
-    // Air-only activation: fast downward drop; impact triggers only on actual surface contact.
+    if (onGround) return;
     this.groundSlamPending = true;
     this.groundSlamHitTargets.clear();
-    // Cooldown starts on actual activation attempt (no hold abuse; keydown edge in input).
     this.groundSlamCooldownRemainingMs = this.groundSlamCooldownMs;
     this.body.setVelocityY(PLAYER_BALANCE.groundSlamDownVelocity);
   }
@@ -416,21 +366,19 @@ export class Player {
     lookTarget: LookTarget,
     aimTarget: LookTarget = null,
   ): void {
-    if (this.attackCooldownRemainingMs > 0 || this.attackRemainingMs > 0) {
-      return;
-    }
-
-    // Phase 11.12: attack direction is character facing only (not cursor).
-    // Mouse/touch nearest-enemy aim may still trigger attack, but never overrides facing.
+    if (this.attackCooldownRemainingMs > 0 || this.attackRemainingMs > 0) return;
     void byPointer;
     void lookTarget;
     void aimTarget;
     this.attackDirectionX = this.facing;
     this.attackDirectionY = 0;
-
     this.attackTargets.clear();
-    this.attackRemainingMs = this.attackDurationMs;
-    this.attackCooldownRemainingMs = this.attackCooldownMs;
+    // Keep attackDurationMs stable for readability; attack speed increases rate via cooldown (DPS/feel).
+    this.attackRemainingMs = Math.min(
+      this.attackDurationMs,
+      Math.max(80, this.getAttackCooldownMs() - 20),
+    );
+    this.attackCooldownRemainingMs = this.getAttackCooldownMs();
     AudioManager.playerAttack();
   }
 
@@ -439,14 +387,10 @@ export class Player {
     this.attackCooldownRemainingMs = Math.max(0, this.attackCooldownRemainingMs - delta);
     this.dashCooldownRemainingMs = Math.max(0, this.dashCooldownRemainingMs - delta);
     this.groundSlamCooldownRemainingMs = Math.max(0, this.groundSlamCooldownRemainingMs - delta);
-    if (this.dashRemainingMs > 0) {
-      this.dashRemainingMs = Math.max(0, this.dashRemainingMs - delta);
-    }
+    if (this.dashRemainingMs > 0) this.dashRemainingMs = Math.max(0, this.dashRemainingMs - delta);
     if (this.attackRemainingMs > 0) {
       this.attackRemainingMs = Math.max(0, this.attackRemainingMs - delta);
-      if (this.attackRemainingMs <= 0) {
-        this.attackTargets.clear();
-      }
+      if (this.attackRemainingMs <= 0) this.attackTargets.clear();
     }
   }
 
@@ -460,11 +404,10 @@ export class Player {
   }
 
   private getAttackVisual(): AttackVisual | null {
-    if (this.attackRemainingMs <= 0) {
-      return null;
-    }
+    if (this.attackRemainingMs <= 0) return null;
+    const dur = Math.min(this.attackDurationMs, Math.max(80, this.getAttackCooldownMs() - 20));
     return {
-      progress: 1 - this.attackRemainingMs / this.attackDurationMs,
+      progress: 1 - this.attackRemainingMs / Math.max(1, dur),
       directionX: this.attackDirectionX,
       directionY: this.attackDirectionY,
       range: this.attackRange,
@@ -489,9 +432,7 @@ export class Player {
   }
 
   private die(): void {
-    if (this.dead) {
-      return;
-    }
+    if (this.dead) return;
     this.dead = true;
     this.groundSlamPending = false;
     this.groundSlamImpact = null;
@@ -514,15 +455,12 @@ export class Player {
 
   private updateDeathEffect(delta: number): void {
     this.view.renderDeathEffect(delta);
-    if (!this.deathEffectFinished && this.view.isDeathEffectFinished()) {
+    if (!this.deathEffectFinished && this.view.isDeathEffectFinished())
       this.deathEffectFinished = true;
-    }
   }
 
   private resolveState(horizontal: number, onGround: boolean): PlayerVisualState {
-    if (!onGround) {
-      return this.body.velocity.y < 0 ? 'JUMPING' : 'FALLING';
-    }
+    if (!onGround) return this.body.velocity.y < 0 ? 'JUMPING' : 'FALLING';
     return horizontal !== 0 ? 'MOVING' : 'IDLE';
   }
 }

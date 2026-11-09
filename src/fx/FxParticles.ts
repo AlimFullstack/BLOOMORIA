@@ -130,6 +130,28 @@ export class FxParticles {
     }
   }
 
+  public emitSkySpawn(x: number, y: number, color: string, width: number): void {
+    const count = Math.max(8, Math.min(16, Math.round(width / 5)));
+    for (let i = 0; i < count; i += 1) {
+      const dir = i % 2 === 0 ? -1 : 1;
+      this.spawn(
+        this.makeSimple({
+          x: x + dir * Math.random() * Math.max(6, width * 0.35),
+          y: y + Math.random() * 6,
+          vx: dir * (18 + Math.random() * 42),
+          vy: 8 + Math.random() * 28,
+          life: 180 + Math.random() * 140,
+          maxLife: 340,
+          size: 2.5 + Math.random() * 2.5,
+          color: i % 4 === 0 ? '#FFFFFF' : color,
+          alpha: 0.72,
+          gravity: 90,
+          drag: 0.018,
+        }),
+      );
+    }
+  }
+
   public emitSwordSwing(
     pivotX: number,
     pivotY: number,

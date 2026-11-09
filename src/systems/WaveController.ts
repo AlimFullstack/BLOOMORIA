@@ -5,17 +5,20 @@ import { getColossusBalance, getEnemyBalance } from '../data/balance/enemy.balan
 import { Projectile } from '../entities/enemy/Projectile';
 import { Shockwave } from '../entities/enemy/Shockwave';
 import { HealthCubePickup } from '../entities/pickup/HealthCubePickup';
+import { FxParticles } from '../fx/FxParticles';
+import { Player } from '../entities/player/Player';
 
-const SPAWN_X_MARGIN = 70;
-const SPAWN_PLAYER_SAFE_DISTANCE = 122;
-const SPAWN_ENTITY_CLEARANCE = 56;
+const SPAWN_SKY_Y_OFFSET = 24;
+const SPAWN_SKY_X_INSET = 6;
+const SPAWN_MIN_DROP_GAP = 72;
+const SPAWN_MAX_CONCURRENT_DROPS = 4;
+const SPAWN_PLAYER_X_AVOID = 96;
 const BOSS_WAVE_INTERVAL = 5;
 
 interface SpawnSpec {
   type: EnemyArchetype;
   width: number;
   height: number;
-  spawnY: number;
   bossWaveIndex: number;
 }
 
@@ -31,11 +34,11 @@ export class WaveController {
   private readonly projectiles: Projectile[] = [];
   private readonly shockwaves: Shockwave[] = [];
   private readonly pickups: HealthCubePickup[] = [];
+  private readonly spawnFx: FxParticles;
   private wave = 0;
   private pendingSpawns = 0;
   private spawnTimerMs = 0;
   private intermissionMs = 0;
-  private spawnOnRight = true;
   private started = false;
   private waveClearedPending = false;
   private totalKills = 0;
@@ -49,7 +52,10 @@ export class WaveController {
     private readonly scene: Phaser.Scene,
     private readonly platforms: Phaser.Physics.Arcade.StaticGroup,
     private readonly arenaPlatforms: readonly ArenaPlatformBounds[],
-  ) {}
+    private readonly player: Player,
+  ) {
+    this.spawnFx = new FxParticles(this.scene, 8, 180);
+  }
 
   public start(): void {
     if (this.started) {
@@ -82,15 +88,19 @@ export class WaveController {
       return false;
     }
 
-    if (paused || !playerAlive) {
-      const deathDelta = paused ? 0 : delta;
-      this.updateEnemies(deathDelta, playerX, playerY);
-      this.updateShockwaves(deathDelta);
-      if (!playerAlive) {
-        this.intermissionMs = 0;
-        this.spawnTimerMs = 0;
-        this.waveClearedPending = false;
-      }
+    if (paused) {
+      // Pause freezes enemies, projectiles, shockwaves, pickups, spawn fx, and wave/spawn timers.
+      return false;
+    }
+
+    this.spawnFx.update(delta);
+
+    if (!playerAlive) {
+      this.updateEnemies(delta, playerX, playerY);
+      this.updateShockwaves(delta);
+      this.intermissionMs = 0;
+      this.spawnTimerMs = 0;
+      this.waveClearedPending = false;
       return false;
     }
 
@@ -110,7 +120,7 @@ export class WaveController {
     if (this.hasPendingSpawns()) {
       this.spawnTimerMs -= delta;
       if (this.spawnTimerMs <= 0) {
-        this.spawnOne(playerX, playerY);
+        this.spawnOne(playerX);
         if (this.hasPendingSpawns()) {
           this.spawnTimerMs = this.nextSpawnDelayMs();
         }
@@ -185,7 +195,6 @@ export class WaveController {
   public reset(): void {
     this.destroy();
     this.wave = 0;
-    this.spawnOnRight = true;
     this.started = false;
     this.totalKills = 0;
     this.bossWave = false;
@@ -208,6 +217,7 @@ export class WaveController {
     for (const pickup of this.pickups) {
       pickup.destroy();
     }
+    this.spawnFx.destroy();
     this.enemies.length = 0;
     this.projectiles.length = 0;
     this.shockwaves.length = 0;
@@ -233,7 +243,9 @@ export class WaveController {
 
   private nextSpawnDelayMs(): number {
     // Preserve normal spawn timing; boss waves remain staggered via the same interval.
-    return 1000 + Math.random() * 500;
+    // Slight pressure ramp by wave, capped for mobile/performance and readability.
+    const ramp = Math.min(180, Math.max(0, (this.wave - 1) * 8));
+    return 980 - ramp + Math.random() * 420;
   }
 
   private hasPendingSpawns(): boolean {
@@ -252,11 +264,12 @@ export class WaveController {
     let bruteChance = 0;
     let rangerChance = 0;
     if (wave >= 3) {
-      bruteChance = Math.min(0.28, 0.12 + (wave - 3) * 0.04);
+      bruteChance = Math.min(0.24, 0.1 + (wave - 3) * 0.03);
     }
     if (wave >= 4) {
-      rangerChance = Math.min(0.22, 0.1 + (wave - 4) * 0.03);
+      rangerChance = Math.min(0.2, 0.08 + (wave - 4) * 0.025);
     }
+    // Keep readable pressure: avoid specialist-dominant waves while preserving roles.
     const roll = Math.random();
     if (roll < bruteChance) {
       return 'brute';
@@ -267,14 +280,14 @@ export class WaveController {
     return 'grunt';
   }
 
-  private spawnOne(playerX: number, playerY: number): void {
+  private spawnOne(playerX: number): void {
     if (!this.hasPendingSpawns()) {
       return;
     }
     // Spawn the boss first on boss waves, then regular enemies via the shared system.
     const type = this.bossSpawnPending ? 'colossus' : this.chooseArchetype();
     const spec = this.createSpawnSpec(type);
-    this.spawnEnemy(spec, playerX, playerY);
+    this.spawnEnemy(spec, playerX);
   }
 
   private createSpawnSpec(type: EnemyArchetype): SpawnSpec {
@@ -284,16 +297,21 @@ export class WaveController {
       type,
       width: balance.width,
       height: balance.height,
-      spawnY: balance.spawnY,
       bossWaveIndex,
     };
   }
 
-  private spawnEnemy(spec: SpawnSpec, playerX: number, playerY: number): void {
-    const position = this.findSpawnPosition(playerX, playerY, spec);
+  private spawnEnemy(spec: SpawnSpec, playerX: number): void {
+    const position = this.findSkySpawnPosition(playerX, spec);
     if (!position) {
-      // Do not drop pending spawns: crowded/edge cases would lose enemies (1-2 total, one-sided).
-      // Defer and retry on the next spawn tick while keeping wave count intact.
+      // Do not drop pending spawns and do not teleport/mask: defer and retry on next spawn tick.
+      console.warn('[BLOOMORIA][spawn] deferred sky drop (no valid position)', {
+        wave: this.wave,
+        type: spec.type,
+        pending: this.pendingSpawns,
+        bossPending: this.bossSpawnPending,
+        alive: this.countAlive(),
+      });
       this.spawnTimerMs = 220;
       return;
     }
@@ -306,11 +324,56 @@ export class WaveController {
       spec.type,
       spec.bossWaveIndex,
       this.bossesKilled,
+      this.wave,
+      {
+        skyDrop: true,
+        onLanded: (x, bottomY, color) => {
+          this.spawnFx.emitLanding(x, bottomY, color);
+        },
+      },
     );
     this.scene.physics.add.collider(enemy.getBodyObject(), this.platforms);
+    this.scene.physics.add.collider(
+      this.player.getBodyObject(),
+      enemy.getBodyObject(),
+      undefined,
+      (
+        obj1:
+          | Phaser.Types.Physics.Arcade.GameObjectWithBody
+          | Phaser.Physics.Arcade.Body
+          | Phaser.Physics.Arcade.StaticBody
+          | Phaser.Tilemaps.Tile,
+        obj2:
+          | Phaser.Types.Physics.Arcade.GameObjectWithBody
+          | Phaser.Physics.Arcade.Body
+          | Phaser.Physics.Arcade.StaticBody
+          | Phaser.Tilemaps.Tile,
+      ) => {
+        const playerBody = this.player.getBodyObject();
+        const enemyBody = enemy.getBodyObject();
+
+        const playerObj =
+          obj1 === playerBody || (obj1 as Phaser.GameObjects.GameObject).body === playerBody.body
+            ? obj1
+            : obj2;
+        const enemyObj = playerObj === obj1 ? obj2 : obj1;
+
+        const wasDashing = this.player.wasDashingThisFrame();
+        const wasSlamming = this.player.wasGroundSlammingThisFrame();
+        const hasInvulnFrames = this.player.getInvulnerabilityRemainingMs() > 0;
+
+        if (!wasDashing && !wasSlamming && !hasInvulnFrames && enemyObj === enemyBody) {
+          const dmg = enemy.getContactDamage();
+          if (dmg > 0) {
+            this.player.takeDamage(dmg);
+          }
+        }
+
+        return !wasDashing && !wasSlamming;
+      },
+    );
     this.enemies.push(enemy);
-    // Alternate side preference after a successful spawn to avoid one-sided clustering.
-    this.spawnOnRight = position.x < this.scene.scale.width / 2;
+    this.spawnFx.emitSkySpawn(position.x, position.y, enemy.getViewColor(), spec.width);
     if (spec.type === 'colossus') {
       this.bossSpawnPending = false;
     } else {
@@ -318,81 +381,88 @@ export class WaveController {
     }
   }
 
-  private findSpawnPosition(
-    playerX: number,
-    playerY: number,
-    spec: SpawnSpec,
-  ): { x: number; y: number } | null {
+  private findSkySpawnPosition(playerX: number, spec: SpawnSpec): { x: number; y: number } | null {
     const worldWidth = this.scene.scale.width;
-    const rightX = this.getSpawnX(true, spec.width);
-    const leftX = this.getSpawnX(false, spec.width);
-    // Strict pass respects player distance and enemy clearance; relaxed pass keeps player distance
-    // but ignores crowding to avoid silently dropping pending spawns (cause of 1-2 enemy waves).
-    const candidates = [
-      { x: this.spawnOnRight ? rightX : leftX, y: spec.spawnY, strict: true },
-      { x: this.spawnOnRight ? leftX : rightX, y: spec.spawnY, strict: true },
-      { x: this.spawnOnRight ? rightX : leftX, y: spec.spawnY, strict: false },
-      { x: this.spawnOnRight ? leftX : rightX, y: spec.spawnY, strict: false },
-      { x: worldWidth * 0.2, y: spec.spawnY, strict: false },
-      { x: worldWidth * 0.8, y: spec.spawnY, strict: false },
-    ];
-    for (const candidate of candidates) {
-      if (
-        this.isSpawnPositionValid(
-          candidate.x,
-          candidate.y,
-          playerX,
-          playerY,
-          spec,
-          candidate.strict,
-        )
-      ) {
-        return { x: candidate.x, y: candidate.y };
+    const halfW = spec.width / 2;
+    const inset = halfW + SPAWN_SKY_X_INSET;
+    const minX = inset;
+    const maxX = worldWidth - inset;
+    if (maxX <= minX) {
+      return null;
+    }
+    const y = -spec.height / 2 - SPAWN_SKY_Y_OFFSET;
+    const gap = SPAWN_MIN_DROP_GAP + spec.width * 0.2;
+
+    // Limit concurrent drops for readability/perf; do not silently drop pending spawns.
+    if (this.countActiveDrops() >= SPAWN_MAX_CONCURRENT_DROPS) {
+      return null;
+    }
+
+    // Uniform random across full arena width with anti-column retries and safe fallbacks.
+    const maxAttempts = 26;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const strict = attempt < 14;
+      const avoidPlayer = attempt < 18;
+      const x = Phaser.Math.FloatBetween(minX, maxX);
+      if (!avoidPlayer || Math.abs(x - playerX) >= SPAWN_PLAYER_X_AVOID + halfW * 0.3) {
+        if (this.isSkySpawnXValid(x, gap, strict)) {
+          return { x, y };
+        }
       }
     }
-    return null;
+
+    // Fallback sweep: keep random distribution preference but guarantee progress when possible.
+    const start = Phaser.Math.FloatBetween(minX, maxX);
+    const steps = 18;
+    for (let i = 0; i < steps; i += 1) {
+      const t = (i / (steps - 1)) * (maxX - minX);
+      let x = minX + ((start - minX + t) % (maxX - minX));
+      if (i % 2 === 1) {
+        x = maxX - (x - minX);
+      }
+      if (Math.abs(x - playerX) < SPAWN_PLAYER_X_AVOID * 0.5) {
+        continue;
+      }
+      if (this.isSkySpawnXValid(x, gap, false)) {
+        return { x, y };
+      }
+    }
+
+    // Last resort: farthest-from-player X (still above arena; real physics drop). Not a teleport.
+    const farX = playerX < worldWidth / 2 ? maxX : minX;
+    return { x: Phaser.Math.Clamp(farX, minX, maxX), y };
   }
 
-  private isSpawnPositionValid(
-    x: number,
-    y: number,
-    playerX: number,
-    playerY: number,
-    spec: SpawnSpec,
-    strictEnemyClearance = true,
-  ): boolean {
-    const worldWidth = this.scene.scale.width;
+  private isSkySpawnXValid(x: number, minGap: number, strictDrops: boolean): boolean {
     const worldHeight = this.scene.scale.height;
-    const margin = SPAWN_X_MARGIN / 2 + spec.width / 2;
-    if (x < margin || x > worldWidth - margin) {
-      return false;
-    }
-    if (y < spec.height / 2 || y > worldHeight - spec.height / 2) {
-      return false;
-    }
-    const safeDistance = SPAWN_PLAYER_SAFE_DISTANCE + spec.width * 0.35;
-    if (Math.hypot(x - playerX, y - playerY) < safeDistance) {
-      return false;
-    }
-    if (!strictEnemyClearance) {
-      return true;
-    }
     for (const enemy of this.enemies) {
       if (enemy.isDead()) {
         continue;
       }
       const body = enemy.getBodyObject();
-      const clearance = SPAWN_ENTITY_CLEARANCE + spec.width * 0.4;
-      if (Math.hypot(x - body.x, y - body.y) < clearance) {
+      const sameColumn = Math.abs(x - body.x) < minGap;
+      if (!sameColumn) {
+        continue;
+      }
+      if (strictDrops && enemy.isSpawning()) {
+        return false;
+      }
+      // Avoid stacking directly over enemies still high in the drop column.
+      if (body.y < worldHeight * 0.45) {
         return false;
       }
     }
     return true;
   }
 
-  private getSpawnX(right: boolean, width: number): number {
-    const inset = SPAWN_X_MARGIN + Math.max(0, width / 2 - 20);
-    return right ? this.scene.scale.width - inset : inset;
+  private countActiveDrops(): number {
+    let count = 0;
+    for (const enemy of this.enemies) {
+      if (!enemy.isDead() && enemy.isSpawning()) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   private updateEnemies(delta: number, playerX: number, playerY: number): void {

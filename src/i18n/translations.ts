@@ -44,15 +44,15 @@ const en = {
   'gameOver.upgrades': 'Upgrades collected: {upgrades}',
   'gameOver.tryAgain': 'TRY AGAIN',
   'upgrade.max_hp.name': 'Vital Core',
-  'upgrade.max_hp.desc': '+{bonus} Max HP',
+  'upgrade.max_hp.desc': '+1 Max HP',
   'upgrade.damage.name': 'Sharp Edge',
-  'upgrade.damage.desc': '+{bonus} Attack Damage',
+  'upgrade.damage.desc': '+20% Damage',
   'upgrade.move_speed.name': 'Swift Step',
-  'upgrade.move_speed.desc': '+10% Move Speed',
+  'upgrade.move_speed.desc': '+8% Move Speed',
   'upgrade.attack_speed.name': 'Quick Strike',
-  'upgrade.attack_speed.desc': '+10% Attack Speed',
+  'upgrade.attack_speed.desc': '+12% Attack Speed',
   'upgrade.heal.name': 'Mend',
-  'upgrade.heal.desc': '+{amount} HP (Heal)',
+  'upgrade.heal.desc': 'Heal 25% Max HP',
 } as const;
 
 const ru: Record<TranslationKey, string> = {
@@ -97,15 +97,15 @@ const ru: Record<TranslationKey, string> = {
   'gameOver.upgrades': 'Получено улучшений: {upgrades}',
   'gameOver.tryAgain': 'ЕЩЁ РАЗ',
   'upgrade.max_hp.name': 'Живое ядро',
-  'upgrade.max_hp.desc': '+{bonus} максимальное ОЗ',
+  'upgrade.max_hp.desc': '+1 макс. ОЗ',
   'upgrade.damage.name': 'Острое лезвие',
-  'upgrade.damage.desc': '+{bonus} к урону атаки',
+  'upgrade.damage.desc': '+20% урон',
   'upgrade.move_speed.name': 'Быстрый шаг',
-  'upgrade.move_speed.desc': '+10% к скорости передвижения',
+  'upgrade.move_speed.desc': '+8% скорость',
   'upgrade.attack_speed.name': 'Быстрый удар',
-  'upgrade.attack_speed.desc': '+10% к скорости атаки',
+  'upgrade.attack_speed.desc': '+12% скорость атаки',
   'upgrade.heal.name': 'Исцеление',
-  'upgrade.heal.desc': '+{amount} ОЗ (Лечение)',
+  'upgrade.heal.desc': 'Исцеление 25% макс. ОЗ',
 };
 
 const dictionaries: Record<Language, Record<TranslationKey, string>> = { en, ru };

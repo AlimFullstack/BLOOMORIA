@@ -1,12 +1,11 @@
-﻿import Phaser from 'phaser';
+import Phaser from 'phaser';
 import { AudioManager } from '../../audio/AudioManager';
 import type { ArenaPlatformBounds } from '../arena/Arena';
 import {
   ENEMY_AI_CONFIG,
+  MIN_ENEMY_ATTACK_COOLDOWN_MS,
   getColossusBalance,
   getEnemyBalance,
-  getProgressionAttackCooldownMs,
-  getProgressionAttackFrequencyMultiplier,
   scaleEnemyBalance,
   type EnemyArchetype,
   type EnemyBalance,
@@ -31,19 +30,23 @@ export interface EnemyDeathInfo {
 
 export class Enemy {
   private static readonly ATTACK_TELEGRAPH_MS = 300;
+  private static readonly SPAWN_LAND_TIMEOUT_MS = 5000;
 
   private readonly bodyObject: Phaser.GameObjects.Rectangle;
   private readonly body: Phaser.Physics.Arcade.Body;
   private readonly view: EnemyView;
   private readonly balance: EnemyBalance;
   private readonly audioKey: string;
-  private readonly attackFrequencyMultiplier: number;
+  private readonly onLanded?: (x: number, bottomY: number, color: string) => void;
   private facing: EnemyFacing = -1;
   private hp: number;
   private dead = false;
   private deathBurstStarted = false;
   private deathEffectFinished = false;
   private deathRewardConsumed = false;
+  private spawning = false;
+  private spawnMs = 0;
+  private spawnLandTimeoutWarned = false;
   private invulnerabilityRemainingMs = 0;
   private attackCooldownRemainingMs = 0;
   private attackTelegraphRemainingMs = 0;
@@ -82,13 +85,16 @@ export class Enemy {
     archetype: EnemyArchetype = 'grunt',
     bossWaveIndex = 1,
     bossesKilled = 0,
+    wave = 1,
+    options?: { skyDrop?: boolean; onLanded?: (x: number, bottomY: number, color: string) => void },
   ) {
     const baseBalance =
       archetype === 'colossus' ? getColossusBalance(bossWaveIndex) : getEnemyBalance(archetype);
-    this.balance = scaleEnemyBalance(baseBalance, bossesKilled);
+    this.balance = scaleEnemyBalance(baseBalance, bossesKilled, wave);
     this.hp = this.balance.maxHp;
-    this.attackFrequencyMultiplier = getProgressionAttackFrequencyMultiplier(bossesKilled);
     this.arenaPlatforms = arenaPlatforms;
+    this.onLanded = options?.onLanded;
+    this.spawning = options?.skyDrop === true;
     enemyAudioSeq += 1;
     this.audioKey = `${this.balance.archetype}-${enemyAudioSeq}`;
     this.bodyObject = this.scene.add.rectangle(x, y, this.balance.width, this.balance.height);
@@ -98,6 +104,9 @@ export class Enemy {
     this.body = this.bodyObject.body as Phaser.Physics.Arcade.Body;
     this.body.setSize(this.balance.width, this.balance.height);
     this.body.setCollideWorldBounds(true);
+    if (this.spawning) {
+      this.body.setVelocity(0, 0);
+    }
 
     this.view = new EnemyView(this.scene, this.balance);
     this.lastStuckCheckX = x;
@@ -110,6 +119,10 @@ export class Enemy {
 
   public getArchetype(): EnemyArchetype {
     return this.balance.archetype;
+  }
+
+  public getViewColor(): string {
+    return this.balance.view.border;
   }
 
   public isBoss(): boolean {
@@ -152,6 +165,10 @@ export class Enemy {
     return this.balance.attackDamage;
   }
 
+  public getContactDamage(): number {
+    return this.balance.contactDamage;
+  }
+
   public getHp(): number {
     return this.hp;
   }
@@ -179,6 +196,10 @@ export class Enemy {
     return this.attackTargets.has(target);
   }
 
+  public isSpawning(): boolean {
+    return this.spawning;
+  }
+
   public markHitTarget(target: object): void {
     this.attackTargets.add(target);
   }
@@ -201,6 +222,11 @@ export class Enemy {
   ): void {
     if (this.dead) {
       this.updateDeathEffect(delta);
+      return;
+    }
+
+    if (this.spawning) {
+      this.updateSpawnLanding(delta);
       return;
     }
 
@@ -259,6 +285,35 @@ export class Enemy {
     this.render(delta);
     this.updateMovementAudio(delta, onGround);
     this.wasOnGround = onGround;
+  }
+
+  private updateSpawnLanding(delta: number): void {
+    // Real physics fall: gravity/colliders handled by Phaser; no AI, no horizontal movement, no attacks.
+    this.body.setVelocityX(0);
+    this.spawnMs += Math.max(0, delta);
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    if (onGround) {
+      this.spawning = false;
+      this.body.setVelocityX(0);
+      this.lastStuckCheckX = this.bodyObject.x;
+      this.wasOnGround = true;
+      AudioManager.enemyLand(this.audioKey);
+      const bottomY = this.bodyObject.y + this.balance.height / 2;
+      this.onLanded?.(this.bodyObject.x, bottomY, this.balance.view.border);
+      this.render(delta);
+      return;
+    }
+    if (!this.spawnLandTimeoutWarned && this.spawnMs >= Enemy.SPAWN_LAND_TIMEOUT_MS) {
+      this.spawnLandTimeoutWarned = true;
+      console.warn('[BLOOMORIA][spawn] enemy failed to land in time', {
+        archetype: this.balance.archetype,
+        x: Math.round(this.bodyObject.x),
+        y: Math.round(this.bodyObject.y),
+        vy: Math.round(this.body.velocity.y),
+        spawnMs: Math.round(this.spawnMs),
+      });
+    }
+    this.render(delta);
   }
 
   private updateMovementAudio(delta: number, onGround: boolean): void {
@@ -420,16 +475,13 @@ export class Enemy {
       // Phase 11.11: mandatory 300ms telegraph before damage/shockwave emission.
       this.bossPhaseMs = Enemy.ATTACK_TELEGRAPH_MS;
       this.attackRemainingMs = this.bossPhaseMs;
-      this.bossSlamCooldownMs = getProgressionAttackCooldownMs(
-        this.balance.slamCooldownMs,
-        this.attackFrequencyMultiplier,
-      );
+      this.bossSlamCooldownMs = Math.max(500, Math.round(this.balance.slamCooldownMs));
     } else {
       this.bossPhaseMs = Enemy.ATTACK_TELEGRAPH_MS;
       this.attackRemainingMs = this.bossPhaseMs;
-      this.bossMeleeCooldownMs = getProgressionAttackCooldownMs(
-        this.balance.attackCooldownMs,
-        this.attackFrequencyMultiplier,
+      this.bossMeleeCooldownMs = Math.max(
+        MIN_ENEMY_ATTACK_COOLDOWN_MS,
+        Math.round(this.balance.attackCooldownMs),
       );
       // Audio delayed to active transition (after 300ms telegraph) for fairness.
     }
@@ -715,15 +767,11 @@ export class Enemy {
       this.attackDirectionX = this.facing;
       this.attackTargets.clear();
       this.rangedShotFired = false;
-      this.attackDurationTotalMs = getProgressionAttackCooldownMs(
-        this.balance.attackDurationMs,
-        this.attackFrequencyMultiplier,
-        80,
-      );
+      this.attackDurationTotalMs = Math.max(80, Math.round(this.balance.attackDurationMs));
       this.attackRemainingMs = this.attackDurationTotalMs;
-      this.attackCooldownRemainingMs = getProgressionAttackCooldownMs(
-        this.balance.attackCooldownMs,
-        this.attackFrequencyMultiplier,
+      this.attackCooldownRemainingMs = Math.max(
+        MIN_ENEMY_ATTACK_COOLDOWN_MS,
+        Math.round(this.balance.attackCooldownMs),
       );
       return;
     }
@@ -733,15 +781,11 @@ export class Enemy {
     this.attackDirectionX = this.facing;
     this.attackTargets.clear();
     this.rangedShotFired = false;
-    this.attackDurationTotalMs = getProgressionAttackCooldownMs(
-      this.balance.attackDurationMs,
-      this.attackFrequencyMultiplier,
-      80,
-    );
+    this.attackDurationTotalMs = Math.max(80, Math.round(this.balance.attackDurationMs));
     this.attackRemainingMs = this.attackDurationTotalMs;
-    this.attackCooldownRemainingMs = getProgressionAttackCooldownMs(
-      this.balance.attackCooldownMs,
-      this.attackFrequencyMultiplier,
+    this.attackCooldownRemainingMs = Math.max(
+      MIN_ENEMY_ATTACK_COOLDOWN_MS,
+      Math.round(this.balance.attackCooldownMs),
     );
     AudioManager.enemyAttack(
       this.balance.archetype as 'grunt' | 'brute' | 'ranger' | 'boss',

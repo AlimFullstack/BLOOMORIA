@@ -1,11 +1,6 @@
 import Phaser from 'phaser';
 import type { UpgradeDefinition } from '../data/upgrades/upgrade.types';
 import { t, type TranslationKey } from '../i18n/i18n';
-import {
-  getDamageUpgradeBonus,
-  getHealAmountTenPercent,
-  getHealthUpgradeBonusHp,
-} from '../data/upgrades/healthUpgrade';
 import { AudioManager } from '../audio/AudioManager';
 import { readSafeInsets } from './responsive/safeArea';
 
@@ -37,8 +32,6 @@ export class UpgradeSelectionUi {
   constructor(
     private readonly scene: Phaser.Scene,
     onSelect: (upgrade: UpgradeDefinition) => void,
-    private readonly getCurrentMaxHp: () => number,
-    private readonly getCurrentAttackDamage: () => number,
   ) {
     this.onSelect = onSelect;
     this.container = scene.add.container(0, 0);
@@ -174,7 +167,7 @@ export class UpgradeSelectionUi {
       const name = card.getByName('name') as Phaser.GameObjects.Text | null;
       const desc = card.getByName('desc') as Phaser.GameObjects.Text | null;
       name?.setText(t(`upgrade.${upgrade.id}.name` as TranslationKey));
-      desc?.setText(this.getUpgradeDescription(upgrade, this.getCurrentMaxHp()));
+      desc?.setText(this.getUpgradeDescription(upgrade));
       this.setCardHover(card, false);
     }
   }
@@ -182,7 +175,6 @@ export class UpgradeSelectionUi {
   public refreshText(): void {
     this.titleText.setText(t('upgrade.waveCleared'));
     this.subtitleText.setText(t('upgrade.chooseOne'));
-    const currentMaxHp = this.getCurrentMaxHp();
     for (let i = 0; i < this.cards.length; i += 1) {
       const card = this.cards[i];
       const upgrade =
@@ -191,27 +183,11 @@ export class UpgradeSelectionUi {
       const name = card.getByName('name') as Phaser.GameObjects.Text | null;
       const desc = card.getByName('desc') as Phaser.GameObjects.Text | null;
       name?.setText(t(`upgrade.${upgrade.id}.name` as TranslationKey));
-      desc?.setText(this.getUpgradeDescription(upgrade, currentMaxHp));
+      desc?.setText(this.getUpgradeDescription(upgrade));
     }
   }
 
-  private getUpgradeDescription(
-    upgrade: UpgradeDefinition,
-    currentMaxHp = this.getCurrentMaxHp(),
-    currentAttackDamage = this.getCurrentAttackDamage(),
-  ): string {
-    if (upgrade.id === 'max_hp') {
-      const bonusHp = getHealthUpgradeBonusHp(currentMaxHp);
-      return t('upgrade.max_hp.desc', { bonus: bonusHp });
-    }
-    if (upgrade.id === 'damage') {
-      const bonus = getDamageUpgradeBonus(currentAttackDamage);
-      return t('upgrade.damage.desc', { bonus });
-    }
-    if (upgrade.id === 'heal') {
-      const amount = getHealAmountTenPercent(currentMaxHp);
-      return t('upgrade.heal.desc', { amount });
-    }
+  private getUpgradeDescription(upgrade: UpgradeDefinition): string {
     return t(`upgrade.${upgrade.id}.desc` as TranslationKey);
   }
 

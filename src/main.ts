@@ -127,6 +127,9 @@ function installViewportHandling(refreshScale: () => void): void {
 }
 
 const game = createPhaserGame();
+if (typeof window !== 'undefined') {
+  (window as unknown as { game: Phaser.Game }).game = game;
+}
 installBestEffortAutoFullscreen();
 installViewportHandling(() => {
   try {

@@ -35,6 +35,7 @@ export interface EnemyBalance {
   spawnY: number;
   maxHp: number;
   attackDamage: number;
+  contactDamage: number;
   invulnerabilityMs: number;
   attackCooldownMs: number;
   attackDurationMs: number;
@@ -84,8 +85,10 @@ const BASE_COMBAT = {
 export const MIN_ENEMY_ATTACK_COOLDOWN_MS = 180;
 export const MIN_ENEMY_MOVEMENT_SPEED = 10;
 
+// Back-compat exports (used by Enemy). Unified progression lives in progression.balance.ts.
 export function getProgressionAttackFrequencyMultiplier(bossesKilled: number): number {
-  return 1 + Math.max(0, bossesKilled) * 0.05;
+  const b = Math.max(0, Math.floor(bossesKilled));
+  return 1 + b * 0.03;
 }
 
 export function getProgressionMaxHp(baseMaxHp: number, multiplier: number): number {
@@ -116,34 +119,79 @@ export function getProgressionAttackCooldownMs(
   return Math.max(minMs, Math.round(baseCooldownMs / multiplier));
 }
 
-export function scaleEnemyBalance(base: EnemyBalance, bossesKilled: number): EnemyBalance {
-  const multiplier = getProgressionAttackFrequencyMultiplier(bossesKilled);
+export function scaleEnemyBalance(
+  base: EnemyBalance,
+  bossesKilled: number,
+  wave = 1,
+): EnemyBalance {
+  // Lazy import avoided to keep module simple; mirror unified formula via progression helper logic inline? No - use centralized function through require pattern not possible in ESM. Instead keep API and implement unified here? Better: import from progression in this file if no cycle. progression imports type/constants only? It imports EnemyArchetype/EnemyBalance/constants from this file - cycle. So implement unified scaling here and have progression.balance.ts as documentation/alt? Or refactor. To avoid cycle, inline unified scaling here (single source) and make progression.balance.ts re-export? Simpler: keep this as source of truth.
+  const ctx = {
+    wave: Math.max(1, Math.floor(wave)),
+    bossesKilled: Math.max(0, Math.floor(bossesKilled)),
+  };
+  const w = 1 + Math.min(0.55, (ctx.wave - 1) * 0.012);
+  const b = Math.max(0, Math.min(12, ctx.bossesKilled));
+  const clamp = (n: number, min: number, max: number) =>
+    Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  const a = base.archetype;
+  let hpM = w,
+    dmgM = 1,
+    cadM = 1,
+    projM = 1;
+  if (a === 'grunt') {
+    hpM = Math.min(2.35, w * (1 + b * 0.07));
+    dmgM = Math.min(1.45, 1 + (ctx.wave - 1) * 0.006 + b * 0.03);
+    cadM = Math.min(1.22, 1 + b * 0.03 + Math.max(0, ctx.wave - 1) * 0.003);
+  } else if (a === 'brute') {
+    hpM = Math.min(2.1, w * (1 + b * 0.06));
+    dmgM = Math.min(1.4, 1 + (ctx.wave - 1) * 0.005 + b * 0.025);
+    cadM = Math.min(1.18, 1 + b * 0.025 + Math.max(0, ctx.wave - 1) * 0.0025);
+  } else if (a === 'ranger') {
+    hpM = Math.min(2.15, w * (1 + b * 0.065));
+    dmgM = Math.min(1.35, 1 + (ctx.wave - 1) * 0.005 + b * 0.025);
+    cadM = Math.min(1.2, 1 + b * 0.028 + Math.max(0, ctx.wave - 1) * 0.003);
+    projM = Math.min(1.22, 1 + b * 0.03 + (ctx.wave - 1) * 0.003);
+  } else if (a === 'colossus') {
+    hpM = Math.min(2.0, 1 + b * 0.1 + Math.max(0, ctx.wave - 5) * 0.006);
+    dmgM = Math.min(1.55, 1 + b * 0.055 + Math.max(0, ctx.wave - 5) * 0.004);
+    cadM = Math.min(1.18, 1 + b * 0.03);
+    projM = Math.min(1.15, 1 + b * 0.025);
+  }
   return {
     ...base,
-    maxHp: getProgressionMaxHp(base.maxHp, multiplier),
-    attackDamage: getProgressionAttackDamage(base.attackDamage, multiplier),
-    slamDamage: getProgressionAttackDamage(base.slamDamage, multiplier),
-    // Enemy movement speed does not scale with boss-kill progression.
-    moveSpeed: base.moveSpeed,
-    attackCooldownMs: getProgressionAttackCooldownMs(base.attackCooldownMs, multiplier),
-    slamCooldownMs: getProgressionAttackCooldownMs(base.slamCooldownMs, multiplier, 500),
-    projectileSpeed: getProgressionProjectileSpeed(base.projectileSpeed, multiplier),
-    shockwaveSpeed: getProgressionProjectileSpeed(base.shockwaveSpeed, multiplier),
+    maxHp: clamp(r1(base.maxHp * hpM), 1, 999),
+    attackDamage: base.attackDamage > 0 ? clamp(r1(base.attackDamage * dmgM), 0.1, 99) : 0,
+    contactDamage: base.contactDamage > 0 ? clamp(r1(base.contactDamage * dmgM), 0.1, 99) : 0,
+    slamDamage: base.slamDamage > 0 ? clamp(r1(base.slamDamage * dmgM), 0.1, 99) : 0,
+    moveSpeed:
+      base.moveSpeed > 0 ? clamp(Math.round(base.moveSpeed), MIN_ENEMY_MOVEMENT_SPEED, 999) : 0,
+    attackCooldownMs:
+      base.attackCooldownMs > 0
+        ? clamp(Math.round(base.attackCooldownMs / cadM), MIN_ENEMY_ATTACK_COOLDOWN_MS, 60000)
+        : 0,
+    slamCooldownMs:
+      base.slamCooldownMs > 0 ? clamp(Math.round(base.slamCooldownMs / cadM), 500, 60000) : 0,
+    projectileSpeed:
+      base.projectileSpeed > 0 ? clamp(Math.round(base.projectileSpeed * projM), 1, 9999) : 0,
+    shockwaveSpeed:
+      base.shockwaveSpeed > 0 ? clamp(Math.round(base.shockwaveSpeed * projM), 1, 9999) : 0,
   };
 }
 
 export const GRUNT_BALANCE: EnemyBalance = {
   archetype: 'grunt',
-  width: 42,
+  width: 34,
   height: 34,
-  moveSpeed: 120,
-  stopDistance: 28,
+  moveSpeed: 108,
+  stopDistance: 30,
   spawnY: 551, // Phase 11.15: low platform top 568 (Y_LOW 580) - 34/2
-  maxHp: 2,
+  maxHp: 3,
   attackDamage: 1,
-  invulnerabilityMs: 200,
-  attackCooldownMs: 1500,
-  attackDurationMs: 180,
+  contactDamage: 1,
+  invulnerabilityMs: 180,
+  attackCooldownMs: 1450,
+  attackDurationMs: 220,
   attackRange: 54,
   attackHeight: 40,
   jumpSpeed: 730,
@@ -155,14 +203,14 @@ export const GRUNT_BALANCE: EnemyBalance = {
   projectileSize: 0,
   preferredDistance: 0,
   retreatDistance: 0,
-  knockbackHorizontal: 220,
-  knockbackVertical: 90,
+  knockbackHorizontal: 210,
+  knockbackVertical: 85,
   knockbackDurationMs: 140,
-  knockbackMaxSpeed: 260,
+  knockbackMaxSpeed: 250,
   ...BASE_COMBAT,
   view: {
     shape: 'grunt',
-    // Grunt — red (Phase 11.15: slightly reduced brightness, identity preserved)
+    // Grunt РІР‚вЂќ red (Phase 11.15: slightly reduced brightness, identity preserved)
     primary: '#BE2235',
     secondary: '#9E1624',
     shadow: '#5A0D16',
@@ -191,23 +239,25 @@ export const BRUTE_BALANCE: EnemyBalance = {
   archetype: 'brute',
   width: 60,
   height: 48,
-  moveSpeed: 78,
-  stopDistance: 34,
-  maxHp: 5,
-  attackDamage: 2,
-  attackCooldownMs: 2250,
-  attackDurationMs: 220,
-  attackRange: 66,
-  attackHeight: 52,
-  jumpSpeed: 690,
+  moveSpeed: 74,
+  stopDistance: 38,
+  maxHp: 7,
+  attackDamage: 1, // readable heavy hit; threat comes from commitment/windup and presence
+  contactDamage: 2,
+  attackCooldownMs: 2400,
+  attackDurationMs: 260,
+  attackRange: 70,
+  attackHeight: 54,
+  jumpSpeed: 680,
   jumpHorizontalThreshold: 240,
-  knockbackHorizontal: 120,
-  knockbackVertical: 55,
-  knockbackDurationMs: 120,
-  knockbackMaxSpeed: 150,
+  knockbackHorizontal: 105,
+  knockbackVertical: 45,
+  knockbackDurationMs: 110,
+  knockbackMaxSpeed: 140,
+
   view: {
     shape: 'brute',
-    // Brute — brown/bronze (Phase 11.15: slightly reduced brightness)
+    // Brute РІР‚вЂќ brown/bronze (Phase 11.15: slightly reduced brightness)
     primary: '#7A4F26',
     secondary: '#916341',
     shadow: '#3F2710',
@@ -236,28 +286,30 @@ export const RANGER_BALANCE: EnemyBalance = {
   archetype: 'ranger',
   width: 38,
   height: 32,
-  moveSpeed: 96,
+  moveSpeed: 92,
   stopDistance: 0,
-  maxHp: 2,
+  maxHp: 3,
   attackDamage: 1,
-  attackCooldownMs: 2000,
+  contactDamage: 1,
+  attackCooldownMs: 2100,
   attackDurationMs: 420,
   attackRange: 520,
   attackHeight: 44,
   jumpSpeed: 700,
   jumpHorizontalThreshold: 220,
-  projectileSpeed: 360,
-  projectileLifetimeMs: 1800,
+  projectileSpeed: 320,
+  projectileLifetimeMs: 2200,
   projectileSize: 8,
-  preferredDistance: 280,
+  preferredDistance: 300,
   retreatDistance: 190,
-  knockbackHorizontal: 190,
-  knockbackVertical: 75,
+  knockbackHorizontal: 180,
+  knockbackVertical: 70,
   knockbackDurationMs: 130,
-  knockbackMaxSpeed: 220,
+  knockbackMaxSpeed: 210,
+
   view: {
     shape: 'ranger',
-    // Ranger — turquoise (Phase 11.15: slightly reduced brightness)
+    // Ranger РІР‚вЂќ turquoise (Phase 11.15: slightly reduced brightness)
     primary: '#139FA5',
     secondary: '#0D8995',
     shadow: '#094354',
@@ -286,14 +338,15 @@ export const COLOSSUS_BASE_BALANCE: EnemyBalance = {
   archetype: 'colossus',
   width: 112,
   height: 86,
-  moveSpeed: 48,
-  stopDistance: 52,
+  moveSpeed: 46,
+  stopDistance: 54,
   spawnY: 525, // Phase 11.15: low platform top 568 (Y_LOW 580) - 86/2
-  maxHp: 18,
-  attackDamage: 2,
+  maxHp: 28,
+  attackDamage: 1,
+  contactDamage: 3,
   invulnerabilityMs: 120,
-  attackCooldownMs: 2600,
-  attackDurationMs: 320,
+  attackCooldownMs: 2700,
+  attackDurationMs: 340,
   attackRange: 92,
   attackHeight: 74,
   jumpSpeed: 620,
@@ -305,10 +358,10 @@ export const COLOSSUS_BASE_BALANCE: EnemyBalance = {
   projectileSize: 0,
   preferredDistance: 0,
   retreatDistance: 0,
-  slamDamage: 1,
-  slamTelegraphMs: 700,
-  slamCooldownMs: 4200,
-  shockwaveSpeed: 260,
+  slamDamage: 2,
+  slamTelegraphMs: 760,
+  slamCooldownMs: 4700,
+  shockwaveSpeed: 240,
   shockwaveWidth: 34,
   shockwaveHeight: 20,
   shockwaveLifetimeMs: 1800,
@@ -316,9 +369,10 @@ export const COLOSSUS_BASE_BALANCE: EnemyBalance = {
   knockbackVertical: 0,
   knockbackDurationMs: 0,
   knockbackMaxSpeed: 0,
+
   view: {
     shape: 'colossus',
-    // Colossus — gray/metallic (Phase 11.15: slightly reduced brightness, remains gray)
+    // Colossus РІР‚вЂќ gray/metallic (Phase 11.15: slightly reduced brightness, remains gray)
     primary: '#777D86',
     secondary: '#606873',
     shadow: '#323840',

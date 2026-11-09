@@ -27,10 +27,9 @@ const ARENA_COLORS = {
   platformStroke: '#93AFD3',
   floorAccent: '#4E6B8F',
   midAccent: '#60789A',
-  highAccent: '#6D86A8',
 } as const;
 
-// Phase 11.13: exactly 5 platforms (2 lower, 1 central, 2 upper).
+// Phase 11.13: exactly 3 platforms (2 lower, 1 central).
 // Widths = previous corresponding widths / 1.5; uniform thickness for all bodies/visuals.
 // Floor uses full-arena visual/physics width (1280) as base => 853; others derive from old defs.
 export const ARENA_PLATFORM_THICKNESS = 24;
@@ -43,18 +42,14 @@ const OLD = {
 const W = {
   low: Math.round(OLD.low / 1.5), // 167
   mid: Math.round(OLD.mid / 1.5), // 213
-  high: Math.round(OLD.high / 1.5), // 127
   floor: Math.round(OLD.floor / 1.5), // 853
 } as const;
 const H = ARENA_PLATFORM_THICKNESS;
 const CX = APP_CONFIG.width / 2;
 const X_LOW_L = 320;
 const X_LOW_R = 960;
-const X_HIGH_L = 360;
-const X_HIGH_R = 920;
 const Y_LOW = 580; // Phase 11.15: lowered from 560 (was 520s region); still above physical floor (top 698)
 const Y_MID = 470; // central unchanged (Phase 11.15)
-const Y_HIGH = 315; // Phase 11.15: lowered from 295 (11.14 set 295 from 250). Gap central-top(458)->upper-top(303)=155px < 175px normal jump.
 
 export const ARENA_PLATFORM_DEFS: ReadonlyArray<
   Readonly<ArenaPlatformBounds & { accent: string }>
@@ -62,8 +57,6 @@ export const ARENA_PLATFORM_DEFS: ReadonlyArray<
   { x: X_LOW_L, y: Y_LOW, width: W.low, height: H, accent: ARENA_COLORS.midAccent },
   { x: X_LOW_R, y: Y_LOW, width: W.low, height: H, accent: ARENA_COLORS.midAccent },
   { x: CX, y: Y_MID, width: W.mid, height: H, accent: ARENA_COLORS.midAccent },
-  { x: X_HIGH_L, y: Y_HIGH, width: W.high, height: H, accent: ARENA_COLORS.highAccent },
-  { x: X_HIGH_R, y: Y_HIGH, width: W.high, height: H, accent: ARENA_COLORS.highAccent },
 ] as const;
 
 export function isSegmentBlockedByPlatform(

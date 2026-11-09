@@ -1,0 +1,53 @@
+{
+  "results": [
+    {
+      "name": "Walk into Grunt",
+      "pass": true,
+      "details": "Blocked: true, HP lost: 2 (expected 1), Contact damage: 1"
+    },
+    {
+      "name": "Walk into Brute",
+      "pass": false,
+      "details": "No Brute found"
+    },
+    {
+      "name": "Walk into Ranger",
+      "pass": false,
+      "details": "No Ranger found"
+    },
+    {
+      "name": "Dash through enemy",
+      "pass": false,
+      "details": "Moved through: true, HP lost: 1, Invulnerable during dash: false"
+    },
+    {
+      "name": "Slam through enemy",
+      "pass": false,
+      "details": "HP lost: 1, Was ground slamming: false"
+    },
+    {
+      "name": "Dash ends - collision restores",
+      "pass": true,
+      "details": "Blocked: true, HP lost: 1 (expected 1)"
+    },
+    {
+      "name": "Multiple enemies - no multi-hit per frame",
+      "pass": true,
+      "details": "HP lost: 3 (should be limited by i-frames)"
+    },
+    {
+      "name": "Invulnerability after hit - i-frames work",
+      "pass": true,
+      "details": "HP lost: 4, Max expected: 4, Contact damage: 1"
+    },
+    {
+      "name": "Low HP death from contact damage",
+      "pass": true,
+      "details": "Died: true, HP: 1"
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 4
+  }
+}

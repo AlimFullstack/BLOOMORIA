@@ -71,12 +71,7 @@ export class GameScene extends Phaser.Scene {
     this.waveBanner = new WaveAnnouncementBanner(this);
     this.bossHud = new BossHealthHud(this);
     // getCurrentMaxHp provides the actual max HP at offer/refresh time for max_hp card text.
-    this.upgradeUi = new UpgradeSelectionUi(
-      this,
-      (upgrade) => this.onUpgradeSelected(upgrade),
-      () => this.player?.getMaxHp() ?? PLAYER_BALANCE.maxHp,
-      () => this.player?.getAttackDamage() ?? PLAYER_BALANCE.attackDamage,
-    );
+    this.upgradeUi = new UpgradeSelectionUi(this, (upgrade) => this.onUpgradeSelected(upgrade));
     this.gameOverUi = new GameOverUi(this, () => this.restartRun());
     this.pauseButton = new PauseButton(this, () => this.openPauseMenu());
     this.touchControls = new MobileTouchControls(this, {
@@ -90,7 +85,12 @@ export class GameScene extends Phaser.Scene {
 
     const platforms = this.arena.getPlatformGroup();
     this.physics.add.collider(this.player.getBodyObject(), platforms);
-    this.waveController = new WaveController(this, platforms, this.arena.getPlatformBounds());
+    this.waveController = new WaveController(
+      this,
+      platforms,
+      this.arena.getPlatformBounds(),
+      this.player,
+    );
     this.waveController.start();
 
     const keyboard = this.input.keyboard;
@@ -417,7 +417,16 @@ export class GameScene extends Phaser.Scene {
       if (pauseScene?.scene?.isActive()) return;
       this.upgradeSelectionActive = true;
       this.setGameplayCursor(false);
-      const upgrades = pickRandomUpgrades(3);
+      const upgrades = pickRandomUpgrades(3, {
+        counts: this.player.getUpgradeCounts(),
+        currentHp: this.player.getHp(),
+        currentMaxHp: this.player.getMaxHp(),
+      });
+      if (upgrades.length === 0) {
+        this.upgradeSelectionActive = false;
+        this.waveController.beginIntermission();
+        return;
+      }
       this.upgradeUi.show(upgrades);
     });
   }
@@ -430,6 +439,7 @@ export class GameScene extends Phaser.Scene {
     this.upgradesCollected += 1;
     this.upgradeUi?.hide();
     this.upgradeSelectionActive = false;
+    this.renderHud(true);
     this.waveController.beginIntermission(650);
   }
 
@@ -623,6 +633,28 @@ export class GameScene extends Phaser.Scene {
             playerRect.x + playerRect.width / 2 - (enemyRect?.x ?? hit.x),
             playerRect.y + playerRect.height / 2 - (enemyRect?.y ?? hit.y),
           );
+        }
+      }
+
+      // Contact damage: body-to-body overlap deals enemy's contact damage
+      // Skip if player is invulnerable (i-frames) OR was dashing/slamming this frame (pass-through abilities)
+      const playerInvulnerable =
+        player.isInvulnerable() ||
+        player.wasDashingThisFrame() ||
+        player.wasGroundSlammingThisFrame();
+      if (enemyRect && playerBody.enable && !playerInvulnerable) {
+        if (Phaser.Geom.Intersects.RectangleToRectangle(enemyRect, this.toBodyRect(playerBody))) {
+          const contactDamage = enemy.getContactDamage();
+          if (contactDamage > 0 && player.takeDamage(contactDamage)) {
+            const playerRect = this.toBodyRect(playerBody);
+            const hit = this.impactPoint(enemyRect, playerRect);
+            player.emitHitImpact(
+              hit.x,
+              hit.y,
+              playerRect.x + playerRect.width / 2 - (enemyRect.x + enemyRect.width / 2),
+              playerRect.y + playerRect.height / 2 - (enemyRect.y + enemyRect.height / 2),
+            );
+          }
         }
       }
     }

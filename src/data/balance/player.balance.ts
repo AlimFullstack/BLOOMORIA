@@ -1,15 +1,16 @@
 ﻿export const PLAYER_BALANCE = {
   width: 54,
   height: 54,
-  moveSpeed: 300,
+  // Base tuned for readable combat: upgrades feel meaningful but do not trivialize enemies.
+  moveSpeed: 285,
   jumpSpeed: 700,
   spawnX: 640,
   spawnY: 541, // Phase 11.15: on low platform top (580 - 24/2 - 54/2)
-  maxHp: 3,
+  maxHp: 4,
   attackDamage: 1,
-  invulnerabilityMs: 1000,
-  attackCooldownMs: 700,
-  attackDurationMs: 180,
+  invulnerabilityMs: 900,
+  attackCooldownMs: 620,
+  attackDurationMs: 170,
   attackRange: 62,
   attackHeight: 46,
   dashSpeed: 760,
